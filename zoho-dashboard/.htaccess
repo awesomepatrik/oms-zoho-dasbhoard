@@ -1,0 +1,27 @@
+# Zoho Dashboard — Apache access controls
+
+Options -Indexes
+
+# Block direct browser access to the lib/ directory.
+RewriteEngine On
+RewriteRule ^lib/ - [F,L]
+
+# Ensure PHP files in lib/ cannot be executed via HTTP.
+<FilesMatch "^.*$">
+    <If "%{REQUEST_URI} =~ m|/lib/|">
+        Require all denied
+    </If>
+</FilesMatch>
+
+# Prevent access to temporary cache/swap files.
+<FilesMatch "\.(tmp|bak|swp|orig)$">
+    Require all denied
+</FilesMatch>
+
+# Prevent access to the project brief.
+<FilesMatch "^claude\.md$">
+    Require all denied
+</FilesMatch>
+
+# Force UTF-8 for all responses.
+AddDefaultCharset UTF-8

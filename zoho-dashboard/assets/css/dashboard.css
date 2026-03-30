@@ -1,0 +1,298 @@
+/* =========================================================
+   Zoho Dashboard — Stylesheet
+   Australian non-profit mission agency admin dashboard
+   ========================================================= */
+
+/* ---------------------------------------------------------
+   Reset & base
+   --------------------------------------------------------- */
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+:root {
+    --colour-primary:    #1a5276;   /* Deep navy */
+    --colour-secondary:  #2e86c1;   /* Mid blue */
+    --colour-accent:     #e67e22;   /* Warm orange */
+    --colour-success:    #1e8449;
+    --colour-warning:    #d4ac0d;
+    --colour-danger:     #c0392b;
+    --colour-bg:         #f4f6f8;
+    --colour-card:       #ffffff;
+    --colour-border:     #d5d8dc;
+    --colour-text:       #212529;
+    --colour-muted:      #6c757d;
+
+    --radius:    6px;
+    --shadow:    0 1px 4px rgba(0, 0, 0, 0.08);
+    --gap:       1.25rem;
+}
+
+html {
+    font-size: 16px;
+    scroll-behavior: smooth;
+}
+
+body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--colour-bg);
+    color: var(--colour-text);
+    line-height: 1.5;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* ---------------------------------------------------------
+   Header
+   --------------------------------------------------------- */
+.site-header {
+    background: var(--colour-primary);
+    color: #fff;
+    padding: 0.75rem var(--gap);
+    display: flex;
+    align-items: center;
+    gap: var(--gap);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+}
+
+.site-header h1 {
+    font-size: 1.2rem;
+    font-weight: 600;
+    flex: 1;
+}
+
+.site-header nav {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+}
+
+.site-header nav a {
+    color: rgba(255,255,255,0.85);
+    text-decoration: none;
+    font-size: 0.9rem;
+    transition: color 0.15s;
+}
+
+.site-header nav a:hover {
+    color: #fff;
+}
+
+.btn-reauth {
+    background: var(--colour-accent);
+    color: #fff !important;
+    padding: 0.3rem 0.75rem;
+    border-radius: var(--radius);
+    font-size: 0.85rem !important;
+}
+
+/* ---------------------------------------------------------
+   Dashboard grid
+   --------------------------------------------------------- */
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr));
+    gap: var(--gap);
+    padding: var(--gap);
+    flex: 1;
+    align-items: start;
+}
+
+/* ---------------------------------------------------------
+   Cards
+   --------------------------------------------------------- */
+.card {
+    background: var(--colour-card);
+    border: 1px solid var(--colour-border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.card.wide {
+    grid-column: 1 / -1;
+}
+
+.card h2 {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--colour-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 2px solid var(--colour-secondary);
+    padding-bottom: 0.4rem;
+}
+
+/* ---------------------------------------------------------
+   Summary card row
+   --------------------------------------------------------- */
+.card-row {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: var(--gap);
+}
+
+.card-row .card {
+    text-align: center;
+}
+
+.stat {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--colour-secondary);
+    line-height: 1.2;
+}
+
+/* ---------------------------------------------------------
+   Tables
+   --------------------------------------------------------- */
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+
+.data-table th,
+.data-table td {
+    text-align: left;
+    padding: 0.45rem 0.6rem;
+    border-bottom: 1px solid var(--colour-border);
+}
+
+.data-table th {
+    background: var(--colour-bg);
+    font-weight: 600;
+    color: var(--colour-primary);
+    cursor: pointer;
+    user-select: none;
+}
+
+.data-table th:hover {
+    background: var(--colour-border);
+}
+
+.data-table tbody tr:hover {
+    background: #f0f4f8;
+}
+
+/* Pledge status badges */
+.badge {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 3px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-transform: capitalize;
+}
+
+.badge-active   { background: #d4efdf; color: var(--colour-success); }
+.badge-paused   { background: #fef9e7; color: var(--colour-warning); }
+.badge-stopped  { background: #fadbd8; color: var(--colour-danger); }
+
+/* Progress bars (funding %) */
+.progress-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.progress-bar-bg {
+    flex: 1;
+    height: 8px;
+    background: var(--colour-border);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.progress-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    background: var(--colour-secondary);
+    transition: width 0.4s ease;
+}
+
+.progress-bar-fill.over-target {
+    background: var(--colour-success);
+}
+
+.progress-label {
+    font-size: 0.8rem;
+    min-width: 40px;
+    text-align: right;
+    color: var(--colour-muted);
+}
+
+/* ---------------------------------------------------------
+   Footer
+   --------------------------------------------------------- */
+.site-footer {
+    padding: 0.75rem var(--gap);
+    background: var(--colour-card);
+    border-top: 1px solid var(--colour-border);
+    font-size: 0.85rem;
+    color: var(--colour-muted);
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 1rem;
+}
+
+#btn-refresh {
+    background: var(--colour-secondary);
+    color: #fff;
+    border: none;
+    padding: 0.3rem 0.75rem;
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: background 0.15s;
+}
+
+#btn-refresh:hover {
+    background: var(--colour-primary);
+}
+
+/* ---------------------------------------------------------
+   Loading / error states
+   --------------------------------------------------------- */
+.loading {
+    color: var(--colour-muted);
+    font-style: italic;
+    font-size: 0.9rem;
+}
+
+.error-msg {
+    color: var(--colour-danger);
+    font-size: 0.9rem;
+    background: #fadbd8;
+    border: 1px solid var(--colour-danger);
+    border-radius: var(--radius);
+    padding: 0.5rem 0.75rem;
+}
+
+/* ---------------------------------------------------------
+   Responsive
+   --------------------------------------------------------- */
+@media (max-width: 640px) {
+    .dashboard-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .card-row {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .site-header h1 {
+        font-size: 1rem;
+    }
+}

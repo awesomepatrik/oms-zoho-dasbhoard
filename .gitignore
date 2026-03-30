@@ -1,0 +1,16 @@
+# Zoho credentials and tokens — NEVER commit these
+zoho-dashboard-config/config.php
+zoho-dashboard-config/tokens.json
+zoho-dashboard-config/tokens.json.tmp
+
+# API response cache
+zoho-dashboard-config/cache/
+
+# Claude Code local settings
+.claude/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
