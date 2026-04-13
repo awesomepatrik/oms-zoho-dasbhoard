@@ -1,110 +1,64 @@
 <?php
 /**
- * Zoho Dashboard — main entry point.
- * Checks for valid OAuth tokens; redirects to auth flow if missing.
+ * Employees list page — two-panel master/detail layout.
  */
 require_once __DIR__ . '/lib/helpers.php';
-require_once __DIR__ . '/lib/ZohoOAuth.php';
-
-$oauth = new ZohoOAuth();
-if (!$oauth->hasValidTokens()) {
-    header('Location: /oms-zoho-dashboard/zoho-dashboard/auth/connect.php');
-    exit;
-}
+require_auth();
 ?>
 <!DOCTYPE html>
 <html lang="en-AU">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Zoho Dashboard</title>
-
-    <!-- Chart.js CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
-    <!-- jQuery CDN -->
+    <title>Employees — Mission Agency Dashboard</title>
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"
             integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo="
             crossorigin="anonymous"></script>
-
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
     <link rel="stylesheet" href="/oms-zoho-dashboard/zoho-dashboard/assets/css/dashboard.css">
 </head>
-<body>
+<body class="app-body">
+
     <header class="site-header">
-        <h1>Mission Agency Dashboard</h1>
+        <h1>One Mission Society</h1>
         <nav>
-            <a href="#pledges">Pledges</a>
-            <a href="#income">Income</a>
-            <a href="#employees">Employees</a>
             <a href="/oms-zoho-dashboard/zoho-dashboard/auth/connect.php" class="btn-reauth">Re-authorise</a>
         </nav>
     </header>
 
-    <main class="dashboard-grid">
+    <div class="app-layout">
 
-        <!-- Agency-wide summary cards -->
-        <section class="card-row" id="summary">
-            <div class="card" id="card-total-pledged">
-                <h2>Total Pledged</h2>
-                <p class="stat" id="stat-total-pledged">Loading…</p>
+        <!-- ── Sidebar ───────────────────────────────────────────── -->
+        <aside class="app-sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-title-row">
+                    <span class="sidebar-title">All Items</span>
+                    <button id="btn-refresh" class="sidebar-refresh" title="Refresh data">&#8635;</button>
+                </div>
+                <input type="search" id="emp-search"
+                       class="sidebar-search"
+                       placeholder="Search…"
+                       autocomplete="off">
             </div>
-            <div class="card" id="card-agency-target">
-                <h2>Agency Target</h2>
-                <p class="stat" id="stat-agency-target">Loading…</p>
+            <div id="emp-list">
+                <p class="sidebar-status">Loading…</p>
             </div>
-            <div class="card" id="card-funded-pct">
-                <h2>Funded</h2>
-                <p class="stat" id="stat-funded-pct">Loading…</p>
+        </aside>
+
+        <!-- ── Detail panel ──────────────────────────────────────── -->
+        <div class="app-detail" id="app-detail">
+            <div class="detail-empty">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+                    <path d="M20 7H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/>
+                    <path d="M16 3H8a2 2 0 0 0-2 2v2h12V5a2 2 0 0 0-2-2z"/>
+                </svg>
+                <p>Select an employee to view their details</p>
             </div>
-            <div class="card" id="card-active-pledges">
-                <h2>Active Pledges</h2>
-                <p class="stat" id="stat-active-pledges">Loading…</p>
-            </div>
-        </section>
+        </div>
 
-        <!-- Pledge status breakdown -->
-        <section class="card" id="pledges">
-            <h2>Pledge Status Breakdown</h2>
-            <canvas id="chart-pledge-status" height="280"></canvas>
-        </section>
+    </div>
 
-        <!-- Income by month -->
-        <section class="card" id="income">
-            <h2>Income by Month</h2>
-            <canvas id="chart-income-month" height="280"></canvas>
-        </section>
+    <script src="/oms-zoho-dashboard/zoho-dashboard/assets/js/employees.js"></script>
 
-        <!-- Funding % per employee -->
-        <section class="card wide" id="employees">
-            <h2>Funding per Employee</h2>
-            <canvas id="chart-funding-per-employee" height="320"></canvas>
-        </section>
-
-        <!-- Balance trends -->
-        <section class="card" id="balance">
-            <h2>Balance Trend</h2>
-            <canvas id="chart-balance-trend" height="280"></canvas>
-        </section>
-
-        <!-- Upcoming invoice run dates -->
-        <section class="card" id="upcoming">
-            <h2>Upcoming Invoice Runs</h2>
-            <div id="table-upcoming-invoices">Loading…</div>
-        </section>
-
-        <!-- Employee pledge detail table -->
-        <section class="card wide" id="pledge-detail">
-            <h2>Employee Pledge Detail</h2>
-            <div id="table-pledge-detail">Loading…</div>
-        </section>
-
-    </main>
-
-    <footer class="site-footer">
-        <p>Data refreshed from Zoho every hour. <button id="btn-refresh">Refresh now</button></p>
-    </footer>
-
-    <script src="/oms-zoho-dashboard/zoho-dashboard/assets/js/charts.js"></script>
-    <script src="/oms-zoho-dashboard/zoho-dashboard/assets/js/tables.js"></script>
-    <script src="/oms-zoho-dashboard/zoho-dashboard/assets/js/app.js"></script>
 </body>
 </html>

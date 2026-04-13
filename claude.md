@@ -3,7 +3,6 @@
 ## What this is
 Admin reporting dashboard for a non-profit mission agency.
 Pulls data from Zoho Books API (recurring invoices / donor pledges)
-and Zoho CRM API (employee records).
 
 ## Stack
 - PHP (plain, no framework) for OAuth2 token handling and API proxy

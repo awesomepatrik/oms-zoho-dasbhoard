@@ -230,12 +230,131 @@ const ZohoCharts = (() => {
         return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
     }
 
+    // -------------------------------------------------------------------------
+    // Income trend line chart (per-employee dashboard)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Render a line chart showing income trend by month for a single employee.
+     *
+     * @param {string} canvasId  ID of the canvas element.
+     * @param {Array}  months    Array of { label: 'Jan 2025', amount: 1234.56 }
+     */
+    function renderIncomeTrendLine(canvasId, months) {
+        destroyIfExists(canvasId);
+
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+
+        if (!months || months.length === 0) {
+            const ctx = canvas.getContext('2d');
+            canvas.height = 80;
+            ctx.font      = '13px system-ui, sans-serif';
+            ctx.fillStyle = '#6c757d';
+            ctx.textAlign = 'center';
+            ctx.fillText('No paid income recorded', canvas.width / 2, 40);
+            return;
+        }
+
+        new Chart(canvas, {
+            type: 'line',
+            data: {
+                labels:   months.map(m => m.label),
+                datasets: [{
+                    label:           'Income (AUD)',
+                    data:            months.map(m => m.amount),
+                    borderColor:     COLOURS.navy,
+                    backgroundColor: 'rgba(26, 82, 118, 0.08)',
+                    fill:            true,
+                    tension:         0.3,
+                    pointRadius:     4,
+                    pointHoverRadius: 6,
+                }],
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: ctx => ' ' + formatCurrency(ctx.parsed.y),
+                        },
+                    },
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: { callback: v => formatCurrency(v) },
+                    },
+                },
+            },
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // Per-employee income trend bar chart
+    // -------------------------------------------------------------------------
+
+    /**
+     * Render a bar chart of income by month for a single employee.
+     *
+     * @param {string} canvasId  ID of the canvas element.
+     * @param {Array}  months    Array of { label: 'Jan 2025', amount: 1234.56 }
+     */
+    function renderEmployeeIncomeTrend(canvasId, months) {
+        destroyIfExists(canvasId);
+
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+
+        if (!months || months.length === 0) {
+            const ctx = canvas.getContext('2d');
+            ctx.font = '13px system-ui, sans-serif';
+            ctx.fillStyle = '#6c757d';
+            ctx.textAlign = 'center';
+            ctx.fillText('No paid income recorded', canvas.width / 2, 60);
+            return;
+        }
+
+        new Chart(canvas, {
+            type: 'bar',
+            data: {
+                labels:   months.map(m => m.label),
+                datasets: [{
+                    label:           'Income (AUD)',
+                    data:            months.map(m => m.amount),
+                    backgroundColor: COLOURS.blue,
+                    borderRadius:    4,
+                }],
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: ctx => ' ' + formatCurrency(ctx.parsed.y),
+                        },
+                    },
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: { callback: v => formatCurrency(v) },
+                    },
+                },
+            },
+        });
+    }
+
     // Public API
     return {
         renderPledgeStatus,
         renderIncomeByMonth,
         renderFundingPerEmployee,
         renderBalanceTrend,
+        renderEmployeeIncomeTrend,
+        renderIncomeTrendLine,
     };
 
 })();

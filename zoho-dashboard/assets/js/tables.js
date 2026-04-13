@@ -194,10 +194,113 @@ const ZohoTables = (() => {
         return $('<span>').text(String(str ?? '')).html();
     }
 
+    // -------------------------------------------------------------------------
+    // Per-employee invoice list table
+    // -------------------------------------------------------------------------
+
+    /**
+     * Render a table of individual invoices for an employee.
+     *
+     * @param {string} containerId  ID of the container div.
+     * @param {Array}  invoices     Array of {
+     *   invoice_number: string,
+     *   date: string,           // 'YYYY-MM-DD'
+     *   customer_name: string,
+     *   amount: number,
+     * }
+     */
+    function renderInvoicesTable(containerId, invoices) {
+        const $container = $('#' + containerId);
+
+        if (!invoices || invoices.length === 0) {
+            $container.html('<p class="loading">No paid invoices found for this employee.</p>');
+            return;
+        }
+
+        const total = invoices.reduce((s, inv) => s + inv.amount, 0);
+
+        const rows = invoices.map(inv => `
+            <tr>
+                <td>${escHtml(inv.invoice_number || '—')}</td>
+                <td>${formatDate(inv.date)}</td>
+                <td>${escHtml(inv.customer_name || '—')}</td>
+                <td class="amount-cell">${formatCurrency(inv.amount)}</td>
+            </tr>
+        `).join('');
+
+        $container.html(`
+            <table class="data-table invoices-table">
+                <thead>
+                    <tr>
+                        <th>Invoice #</th>
+                        <th>Date</th>
+                        <th>Donor</th>
+                        <th>Amount</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+                <tfoot>
+                    <tr class="total-row">
+                        <td colspan="3">Total</td>
+                        <td class="amount-cell">${formatCurrency(total)}</td>
+                    </tr>
+                </tfoot>
+            </table>
+        `);
+    }
+
+    // -------------------------------------------------------------------------
+    // Per-employee income by month table
+    // -------------------------------------------------------------------------
+
+    /**
+     * Render a monthly income breakdown table for a single employee.
+     *
+     * @param {string} containerId  ID of the container div.
+     * @param {Array}  months       Array of { label: 'Jan 2025', amount: 1234.56 }
+     */
+    function renderEmployeeIncomeTable(containerId, months) {
+        const $container = $('#' + containerId);
+
+        if (!months || months.length === 0) {
+            $container.html('<p class="loading">No paid income recorded.</p>');
+            return;
+        }
+
+        const total = months.reduce((s, m) => s + m.amount, 0);
+
+        const rows = months.map(m => `
+            <tr>
+                <td>${escHtml(m.label)}</td>
+                <td class="amount-cell">${formatCurrency(m.amount)}</td>
+            </tr>
+        `).join('');
+
+        $container.html(`
+            <table class="data-table income-month-table">
+                <thead>
+                    <tr>
+                        <th>Month</th>
+                        <th>Amount</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+                <tfoot>
+                    <tr class="total-row">
+                        <td>Total</td>
+                        <td class="amount-cell">${formatCurrency(total)}</td>
+                    </tr>
+                </tfoot>
+            </table>
+        `);
+    }
+
     // Public API
     return {
         renderUpcomingInvoices,
         renderPledgeDetail,
+        renderEmployeeIncomeTable,
+        renderInvoicesTable,
     };
 
 })();
