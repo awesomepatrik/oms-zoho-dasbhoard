@@ -95,6 +95,10 @@ try {
 
 $fn = $spec['fn'];
 
+// Expose the force-refresh flag globally so deep helper functions
+// (e.g. books_getInvoiceIndex) can bypass their own internal caches.
+$GLOBALS['books_force_refresh'] = $forceRefresh;
+
 try {
     $data = $param !== '' ? $fn($token, $param) : $fn($token);
 } catch (RuntimeException $e) {

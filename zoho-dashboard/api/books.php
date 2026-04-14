@@ -60,7 +60,7 @@ function books_getItems(string $token): array
 function books_getItemInvoiceStatus(string $_token): array
 {
     // Prefer the global invoice index (accurate, built once for all employees).
-    $indexCache = new ApiCache('books_invoice_index_v2');
+    $indexCache = new ApiCache('books_invoice_index_v3');
     if ($indexCache->isValid(86400)) {
         $status = [];
         foreach (array_keys($indexCache->read()) as $key) {
@@ -178,7 +178,7 @@ function books_getItemIdsWithInvoices(string $token): array
  *
  * @return array  { "item_id" => [compact_invoice, …], "name:foo" => […], … }
  */
-function books_buildInvoiceIndex(string $token): array
+function books_buildInvoiceIndex(string $token, bool $forceRefresh = false): array
 {
     set_time_limit(600);   // up to 10 minutes for the initial build
 
@@ -186,16 +186,20 @@ function books_buildInvoiceIndex(string $token): array
     $orgId   = $config['books_org_id'];
     $baseUrl = rtrim($config['books_api_base'], '/');
 
-    // Reuse the all-invoices list cache if valid; otherwise re-fetch.
+    // Always fetch a fresh invoice list on force-refresh so no invoices are
+    // missed due to a stale cache.  Otherwise reuse the 1-hour list cache.
     $listCache = new ApiCache('books_invoices');
-    $list      = $listCache->isValid(3600)
-        ? $listCache->read()
-        : books_paginate($token, '/invoices', 'invoices', [
+    if (!$forceRefresh && $listCache->isValid(3600)) {
+        $list = $listCache->read();
+    } else {
+        $list = books_paginate($token, '/invoices', 'invoices', [
             'filter_by'   => 'Status.Paid',
             'per_page'    => 200,
             'sort_column' => 'date',
             'sort_order'  => 'D',
         ]);
+        $listCache->write($list);   // refresh the list cache too
+    }
 
     if (empty($list)) {
         return [];
@@ -268,11 +272,12 @@ function books_buildInvoiceIndex(string $token): array
                     'total'          => $inv['total']          ?? 0,
                 ];
 
-                // Index by item_id and by normalised item name (for fallback matching).
+                // Index by item_id, normalised name, and sorted-word tokens.
                 $seen = [];
                 foreach ($inv['line_items'] as $li) {
-                    $liId   = (string)($li['item_id'] ?? '');
-                    $liName = books_normalise_name($li['name'] ?? '');
+                    $liId     = (string)($li['item_id'] ?? '');
+                    $liName   = books_normalise_name($li['name'] ?? '');
+                    $liTokens = books_name_tokens($li['name'] ?? '');
 
                     if ($liId !== '' && !isset($seen[$liId])) {
                         $index[$liId][] = $record;
@@ -281,6 +286,10 @@ function books_buildInvoiceIndex(string $token): array
                     if ($liName !== '' && !isset($seen['n:' . $liName])) {
                         $index['name:' . $liName][] = $record;
                         $seen['n:' . $liName]       = true;
+                    }
+                    if ($liTokens !== '' && !isset($seen['t:' . $liTokens])) {
+                        $index['tokens:' . $liTokens][] = $record;
+                        $seen['t:' . $liTokens]         = true;
                     }
                 }
             }
@@ -298,13 +307,15 @@ function books_buildInvoiceIndex(string $token): array
  */
 function books_getInvoiceIndex(string $token): array
 {
-    // v2 — cache key bumped when name normalisation logic changed.
-    $cache = new ApiCache('books_invoice_index_v2');
-    if ($cache->isValid(86400)) {   // 24-hour TTL
+    // v3 — cache key bumped: tokens index added + force-refresh now propagates.
+    $forceRefresh = !empty($GLOBALS['books_force_refresh']);
+    $cache        = new ApiCache('books_invoice_index_v3');
+
+    if (!$forceRefresh && $cache->isValid(86400)) {   // 24-hour TTL
         return $cache->read();
     }
 
-    $index = books_buildInvoiceIndex($token);
+    $index = books_buildInvoiceIndex($token, $forceRefresh);
     $cache->write($index);
     return $index;
 }
@@ -335,35 +346,49 @@ function books_getInvoicesByItem(string $token, string $itemId): array
         $itemName = books_normalise_name($d['item']['name'] ?? '');
     }
 
-    $index   = books_getInvoiceIndex($token);
+    $index      = books_getInvoiceIndex($token);
+    $itemTokens = $itemName !== '' ? books_name_tokens($itemName) : '';
+
+    // Pass 1 — exact item_id match (most reliable).
     $matched = $index[(string)$itemId] ?? [];
-    if (empty($matched) && $itemName !== '') {
-        $matched = $index['name:' . $itemName] ?? [];
+
+    // Pass 2 — exact normalised name match.
+    if ($itemName !== '') {
+        $matched = array_merge($matched, $index['name:' . $itemName] ?? []);
     }
 
-    // Also merge any partial-name matches (handles line-item names that contain
-    // the employee name as a prefix/suffix, e.g. "Kumar Ben & Christie - extra").
-    if (!empty($itemName)) {
-        foreach ($index as $key => $records) {
-            if (!str_starts_with($key, 'name:')) continue;
-            $indexedName = substr($key, 5);
-            if ($indexedName === $itemName) continue; // already handled above
-            if (str_contains($indexedName, $itemName) || str_contains($itemName, $indexedName)) {
-                $matched = array_merge($matched, $records);
-            }
+    // Pass 3 — exact sorted-word token match (handles word-order / punctuation variants).
+    if ($itemTokens !== '') {
+        $matched = array_merge($matched, $index['tokens:' . $itemTokens] ?? []);
+    }
+
+    // Pass 4 — partial name/token matches for suffixed descriptions
+    //           e.g. "Kumar Ben & Christie - Monthly Support".
+    foreach ($index as $key => $records) {
+        $prefix = null;
+        if (str_starts_with($key, 'name:'))   $prefix = substr($key, 5);
+        if (str_starts_with($key, 'tokens:')) $prefix = substr($key, 7);
+        if ($prefix === null) continue;
+
+        $isName   = str_starts_with($key, 'name:');
+        $needle   = $isName ? $itemName : $itemTokens;
+        if ($needle === '' || $prefix === $needle) continue;  // already handled
+
+        if (str_contains($prefix, $needle) || str_contains($needle, $prefix)) {
+            $matched = array_merge($matched, $records);
         }
-        // Deduplicate by invoice_id.
-        $seen    = [];
-        $matched = array_filter($matched, function ($r) use (&$seen) {
-            $id = $r['invoice_id'] ?? '';
-            if ($id === '' || isset($seen[$id])) return false;
-            $seen[$id] = true;
-            return true;
-        });
-        $matched = array_values($matched);
     }
 
-    return $matched;
+    // Deduplicate by invoice_id across all passes.
+    $seen    = [];
+    $matched = array_filter($matched, function ($r) use (&$seen) {
+        $id = $r['invoice_id'] ?? '';
+        if ($id === '' || isset($seen[$id])) return false;
+        $seen[$id] = true;
+        return true;
+    });
+
+    return array_values($matched);
 }
 
 // -----------------------------------------------------------------------------
@@ -390,6 +415,27 @@ function books_normalise_name(string $name): string
     // Collapse any spaces that now surround "&"  →  " & ".
     $name = preg_replace('/\s*&\s*/', ' & ', $name);
     return trim($name);
+}
+
+/**
+ * Reduce a name to a canonical sorted-word token string.
+ *
+ * Strips all punctuation, removes common stop-words, sorts the remaining
+ * words alphabetically, and joins with "|".  This lets us match names
+ * regardless of word order or minor punctuation differences.
+ *
+ * e.g. "Kumar, Ben and Christie"  → "ben|christie|kumar"
+ *      "Ben Kumar & Christie"     → "ben|christie|kumar"
+ *      "Kumar Ben & Christie"     → "ben|christie|kumar"
+ */
+function books_name_tokens(string $name): string
+{
+    static $stopWords = ['and', 'or', 'the', 'of', 'for', 'in', 'a', 'an', 'mr', 'mrs', 'ms', 'dr'];
+    $name = mb_strtolower($name);
+    preg_match_all('/[a-z]{2,}/u', $name, $m);
+    $words = array_filter($m[0], fn($w) => !in_array($w, $stopWords));
+    sort($words);
+    return implode('|', array_values($words));
 }
 
 /**
