@@ -221,7 +221,14 @@ $(function () {
         // Transactions
         const sortedInvoices = [...invoices]
             .filter(inv => inv.date)
-            .sort((a, b) => new Date(b.date) - new Date(a.date));
+            .sort((a, b) => {
+                const dateDiff = new Date(b.date) - new Date(a.date);
+                if (dateDiff !== 0) return dateDiff;
+                // Tie-break by invoice number ascending (lower number = created earlier).
+                const numA = parseInt((a.invoice_number || '').replace(/\D/g, ''), 10) || 0;
+                const numB = parseInt((b.invoice_number || '').replace(/\D/g, ''), 10) || 0;
+                return numA - numB;
+            });
 
         const invoiceTotal = sortedInvoices.reduce((s, inv) => s + parseFloat(inv.total || 0), 0);
 

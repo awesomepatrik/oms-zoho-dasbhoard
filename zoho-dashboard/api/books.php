@@ -60,7 +60,7 @@ function books_getItems(string $token): array
 function books_getItemInvoiceStatus(string $_token): array
 {
     // Prefer the global invoice index (accurate, built once for all employees).
-    $indexCache = new ApiCache('books_invoice_index');
+    $indexCache = new ApiCache('books_invoice_index_v2');
     if ($indexCache->isValid(86400)) {
         $status = [];
         foreach (array_keys($indexCache->read()) as $key) {
@@ -268,11 +268,11 @@ function books_buildInvoiceIndex(string $token): array
                     'total'          => $inv['total']          ?? 0,
                 ];
 
-                // Index by item_id and by lowercase item name (for fallback matching).
+                // Index by item_id and by normalised item name (for fallback matching).
                 $seen = [];
                 foreach ($inv['line_items'] as $li) {
                     $liId   = (string)($li['item_id'] ?? '');
-                    $liName = strtolower(trim($li['name'] ?? ''));
+                    $liName = books_normalise_name($li['name'] ?? '');
 
                     if ($liId !== '' && !isset($seen[$liId])) {
                         $index[$liId][] = $record;
@@ -298,7 +298,8 @@ function books_buildInvoiceIndex(string $token): array
  */
 function books_getInvoiceIndex(string $token): array
 {
-    $cache = new ApiCache('books_invoice_index');
+    // v2 — cache key bumped when name normalisation logic changed.
+    $cache = new ApiCache('books_invoice_index_v2');
     if ($cache->isValid(86400)) {   // 24-hour TTL
         return $cache->read();
     }
@@ -323,7 +324,7 @@ function books_getInvoicesByItem(string $token, string $itemId): array
     if ($itemsCache->isValid(7200)) {
         foreach ($itemsCache->read() as $it) {
             if ((string)($it['item_id'] ?? '') === (string)$itemId) {
-                $itemName = strtolower(trim($it['name'] ?? ''));
+                $itemName = books_normalise_name($it['name'] ?? '');
                 break;
             }
         }
@@ -331,7 +332,7 @@ function books_getInvoicesByItem(string $token, string $itemId): array
     if ($itemName === '') {
         $cfg      = get_config();
         $d        = books_get($token, rtrim($cfg['books_api_base'], '/') . '/items/' . rawurlencode($itemId) . '?' . http_build_query(['organization_id' => $cfg['books_org_id']]));
-        $itemName = strtolower(trim($d['item']['name'] ?? ''));
+        $itemName = books_normalise_name($d['item']['name'] ?? '');
     }
 
     $index   = books_getInvoiceIndex($token);
@@ -340,12 +341,56 @@ function books_getInvoicesByItem(string $token, string $itemId): array
         $matched = $index['name:' . $itemName] ?? [];
     }
 
+    // Also merge any partial-name matches (handles line-item names that contain
+    // the employee name as a prefix/suffix, e.g. "Kumar Ben & Christie - extra").
+    if (!empty($itemName)) {
+        foreach ($index as $key => $records) {
+            if (!str_starts_with($key, 'name:')) continue;
+            $indexedName = substr($key, 5);
+            if ($indexedName === $itemName) continue; // already handled above
+            if (str_contains($indexedName, $itemName) || str_contains($itemName, $indexedName)) {
+                $matched = array_merge($matched, $records);
+            }
+        }
+        // Deduplicate by invoice_id.
+        $seen    = [];
+        $matched = array_filter($matched, function ($r) use (&$seen) {
+            $id = $r['invoice_id'] ?? '';
+            if ($id === '' || isset($seen[$id])) return false;
+            $seen[$id] = true;
+            return true;
+        });
+        $matched = array_values($matched);
+    }
+
     return $matched;
 }
 
 // -----------------------------------------------------------------------------
 // Internal helpers
 // -----------------------------------------------------------------------------
+
+/**
+ * Normalise an item/line-item name for reliable index matching.
+ *
+ * Handles the most common variations seen in Zoho Books exports:
+ *  - Mixed case          → lowercase
+ *  - Leading/trailing whitespace → trimmed
+ *  - Multiple spaces     → single space
+ *  - " & " / " and "    → normalised to " & " (canonical form)
+ *  - Full-width spaces / non-breaking spaces → regular space
+ */
+function books_normalise_name(string $name): string
+{
+    $name = mb_strtolower(trim($name));
+    // Collapse all whitespace variants to a single space.
+    $name = preg_replace('/[\s\x{00A0}\x{200B}]+/u', ' ', $name);
+    // Normalise "and" (whole word, surrounded by spaces) to "&".
+    $name = preg_replace('/\band\b/', '&', $name);
+    // Collapse any spaces that now surround "&"  →  " & ".
+    $name = preg_replace('/\s*&\s*/', ' & ', $name);
+    return trim($name);
+}
 
 /**
  * Paginate through a Zoho Books endpoint, accumulating all records.
