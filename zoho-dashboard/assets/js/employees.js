@@ -339,24 +339,15 @@ $(function () {
             return isNaN(n) ? 0 : n;
         }
 
-        // Totals derived from the CSV; fall back to item.rate when no parsed data.
-        const msrMonthly = msrRows.length && msrMonthlyCol >= 0
-            ? msrRows.reduce((s, row) => s + parseMsrAmt(row[msrMonthlyCol]), 0)
-            : parseFloat(item.rate || 0);
-        const msrAnnual = msrRows.length && msrYearlyCol >= 0
-            ? msrRows.reduce((s, row) => s + parseMsrAmt(row[msrYearlyCol]), 0)
-            : msrMonthly * 12;
-
-        // Current-year totals for summary cards.
-        const currentYearInvoices = invoices.filter(inv =>
-            inv.date && new Date(inv.date).getFullYear() === new Date().getFullYear()
-        );
-        const msrYearReceived = currentYearInvoices.reduce(
-            (s, inv) => s + parseFloat(inv.total || 0), 0
-        );
-        const msrBalance   = msrAnnual - msrYearReceived;
-        const msrFundedPct = msrAnnual > 0
-            ? Math.min(100, (msrYearReceived / msrAnnual) * 100) : 0;
+        // Use the "Total" row's Term column as the grand total; fall back to summing Yearly.
+        const msrTermCol   = msrHeaders.length > 0 ? msrHeaders.length - 1 : 4;
+        const msrTotalRow  = msrRows.find(cells => /^total$/i.test((cells[0] || '').trim()));
+        const msrGrandTotal = msrTotalRow
+            ? parseMsrAmt(msrTotalRow[msrTermCol] || '')
+            : (msrRows.length && msrYearlyCol >= 0
+                ? msrRows.reduce((s, row) => s + parseMsrAmt(row[msrYearlyCol]), 0)
+                : parseFloat(item.rate || 0) * 12);
+        const msrMonthlyRequired = msrGrandTotal > 0 ? msrGrandTotal / 12 : parseFloat(item.rate || 0);
 
         // Build the MSR breakdown table.
         const msrColCount   = msrHeaders.length || 2;
@@ -435,34 +426,10 @@ $(function () {
                 <div class="tab-pane is-hidden" id="tab-msr">
                     <div class="msr-layout">
 
-                        <div class="msr-summary-grid">
-                            <div class="msr-summary-card">
-                                <span class="msr-summary-label">Monthly Support Req.</span>
-                                <span class="msr-summary-value">${escHtml(formatCurrency(msrMonthly))}</span>
-                                <span class="msr-summary-source">
-                                    ${msrField ? escHtml(msrField.label) : 'From item rate'}
-                                </span>
-                            </div>
-                            <div class="msr-summary-card">
-                                <span class="msr-summary-label">Annual Support Req.</span>
-                                <span class="msr-summary-value">${escHtml(formatCurrency(msrAnnual))}</span>
-                            </div>
-                            <div class="msr-summary-card">
-                                <span class="msr-summary-label">Received (${new Date().getFullYear()})</span>
-                                <span class="msr-summary-value">${escHtml(formatCurrency(msrYearReceived))}</span>
-                            </div>
-                            <div class="msr-summary-card ${msrBalance > 0 ? 'msr-card-outstanding' : 'msr-card-funded'}">
-                                <span class="msr-summary-label">Balance</span>
-                                <span class="msr-summary-value">${escHtml(formatCurrency(Math.abs(msrBalance)))}</span>
-                                <span class="msr-summary-source">${msrBalance > 0 ? 'Remaining' : 'Fully funded'}</span>
-                            </div>
-                            <div class="msr-summary-card msr-card-pct">
-                                <span class="msr-summary-label">% Funded</span>
-                                <span class="msr-summary-value">${msrFundedPct.toFixed(1)}%</span>
-                                <div class="msr-progress-bar">
-                                    <div class="msr-progress-fill" style="width:${Math.min(100, msrFundedPct).toFixed(1)}%"></div>
-                                </div>
-                            </div>
+                        <div class="msr-monthly-card">
+                            <span class="msr-summary-label">Monthly Support Required</span>
+                            <span class="msr-summary-value">${escHtml(formatCurrency(msrMonthlyRequired))}</span>
+                            <span class="msr-summary-source">Total ${escHtml(formatCurrency(msrGrandTotal))} \u00f7 12</span>
                         </div>
 
                         <section class="msr-fields-section">

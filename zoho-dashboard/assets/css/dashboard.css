@@ -842,11 +842,17 @@ body.app-body {
     gap: 28px;
 }
 
-/* Summary cards row */
-.msr-summary-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
-    gap: 14px;
+/* Single monthly-required card */
+.msr-monthly-card {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 4px;
+    background: var(--colour-card);
+    border: 1px solid var(--colour-border);
+    border-left: 3px solid var(--colour-secondary);
+    border-radius: var(--radius);
+    padding: 16px 24px;
+    align-self: flex-start;
 }
 
 .msr-summary-card {
