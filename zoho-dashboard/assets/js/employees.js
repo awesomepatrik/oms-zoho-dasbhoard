@@ -340,32 +340,55 @@ $(function () {
             return isNaN(n) ? 0 : n;
         }
 
-        // Use the "Total" row's Term column as the grand total; fall back to summing Yearly.
+        // Split rows into Living Cost section and Extras section.
+        // Rows before "Extras" header belong to Living Cost; rows after (excl. "Total") are Extras.
         const msrTermCol   = msrHeaders.length > 0 ? msrHeaders.length - 1 : 4;
-        const msrTotalRow  = msrRows.find(cells => /^total$/i.test((cells[0] || '').trim()));
-        const msrGrandTotal = msrTotalRow
-            ? parseMsrAmt(msrTotalRow[msrTermCol] || '')
-            : (msrRows.length && msrYearlyCol >= 0
-                ? msrRows.reduce((s, row) => s + parseMsrAmt(row[msrYearlyCol]), 0)
-                : parseFloat(item.rate || 0) * 12);
+        const extrasIdx    = msrRows.findIndex(cells => /^extras$/i.test((cells[0] || '').trim()));
+        const livingRows   = (extrasIdx >= 0 ? msrRows.slice(0, extrasIdx) : msrRows)
+            .filter(cells => !/^total$/i.test((cells[0] || '').trim()));
+        const extrasRows   = extrasIdx >= 0
+            ? msrRows.slice(extrasIdx + 1).filter(cells => !/^total$/i.test((cells[0] || '').trim()))
+            : [];
+
+        // Totals: sum the Term (last) column for each section.
+        const lcTermTotal  = livingRows.reduce((s, r) => s + parseMsrAmt(r[msrTermCol] || ''), 0);
+        const exTermTotal  = extrasRows.reduce((s, r) => s + parseMsrAmt(r[msrTermCol] || ''), 0);
+        const msrGrandTotal = lcTermTotal + exTermTotal;
         const msrMonthlyRequired = msrGrandTotal > 0 ? msrGrandTotal / 12 : parseFloat(item.rate || 0);
 
-        // Build the MSR breakdown table.
-        const msrColCount   = msrHeaders.length || 2;
-        // Only sum columns whose values look like currency (start with $).
-        const msrIsCurrency = (ci) => msrRows.some(row => /^\$/.test((row[ci] || '').trim()));
-
+        // Build Living Cost table (full 5 columns from header row).
         const msrTheadCells = msrHeaders.length
             ? msrHeaders.map((h, i) =>
                 `<th${i > 0 ? ' class="amount-cell"' : ''}>${escHtml(h)}</th>`).join('')
-            : '<th>Category</th><th class="amount-cell">Monthly</th>';
+            : '<th>Category</th><th class="amount-cell">Monthly</th><th class="amount-cell">Yearly</th><th class="amount-cell">Multiplier</th><th class="amount-cell">Term</th>';
 
-        const msrTbodyRows = msrRows.length === 0
-            ? `<tr><td colspan="${msrColCount}" class="detail-empty-msg">No MSR data found for this item.</td></tr>`
-            : msrRows.map(cells =>
+        const buildRows = (rows) => rows.length === 0
+            ? `<tr><td colspan="${msrHeaders.length || 2}" class="detail-empty-msg">No data.</td></tr>`
+            : rows.map(cells =>
                 `<tr>${cells.map((c, i) =>
                     `<td${i > 0 ? ' class="amount-cell"' : ''}>${escHtml(c)}</td>`
                 ).join('')}</tr>`).join('');
+
+        const lcTotalCell = `<tfoot><tr class="total-row">
+            <td>Total</td>
+            ${msrHeaders.slice(1, msrTermCol).map(() => '<td class="amount-cell">\u2014</td>').join('')}
+            <td class="amount-cell">${escHtml(formatCurrency(lcTermTotal))}</td>
+        </tr></tfoot>`;
+
+        // Extras table uses 2 columns: Description + Term (Amount).
+        const exTbodyRows = extrasRows.length === 0
+            ? '<tr><td colspan="2" class="detail-empty-msg">No extras.</td></tr>'
+            : extrasRows.map(cells =>
+                `<tr>
+                    <td>${escHtml(cells[0] || '')}</td>
+                    <td class="amount-cell">${escHtml(cells[msrTermCol] || '\u2014')}</td>
+                </tr>`).join('');
+        const exTotalRow = extrasRows.length > 0
+            ? `<tfoot><tr class="total-row">
+                <td>Total</td>
+                <td class="amount-cell">${escHtml(formatCurrency(exTermTotal))}</td>
+               </tr></tfoot>`
+            : '';
 
 
         // ----- Reports tab -----
@@ -419,21 +442,40 @@ $(function () {
                 <div class="tab-pane is-hidden" id="tab-msr">
                     <div class="msr-layout">
 
-                        <div class="msr-monthly-card">
-                            <span class="msr-summary-label">Monthly Support Required</span>
-                            <span class="msr-summary-value">${escHtml(formatCurrency(msrMonthlyRequired))}</span>
-                            <span class="msr-summary-source">Total ${escHtml(formatCurrency(msrGrandTotal))} \u00f7 12</span>
-                        </div>
-
                         <section class="msr-fields-section">
-                            <h3 class="report-title">MSR Breakdown</h3>
+                            <h3 class="report-title">Living Cost</h3>
                             <div class="detail-table-wrap">
                                 <table class="data-table msr-fields-table">
                                     <thead><tr>${msrTheadCells}</tr></thead>
-                                    <tbody>${msrTbodyRows}</tbody>
+                                    <tbody>${buildRows(livingRows)}</tbody>
+                                    ${livingRows.length > 0 ? lcTotalCell : ''}
                                 </table>
                             </div>
                         </section>
+
+                        <section class="msr-fields-section">
+                            <h3 class="report-title">Extras</h3>
+                            <div class="detail-table-wrap">
+                                <table class="data-table msr-fields-table">
+                                    <thead><tr>
+                                        <th>Description</th>
+                                        <th class="amount-cell">Amount</th>
+                                    </tr></thead>
+                                    <tbody>${exTbodyRows}</tbody>
+                                    ${exTotalRow}
+                                </table>
+                            </div>
+                        </section>
+
+                        <div class="msr-monthly-card">
+                            <span class="msr-summary-label">Monthly Support Required</span>
+                            <span class="msr-summary-value">${escHtml(formatCurrency(msrMonthlyRequired))}</span>
+                            <span class="msr-summary-source">
+                                Living Cost ${escHtml(formatCurrency(lcTermTotal))}
+                                + Extras ${escHtml(formatCurrency(exTermTotal))}
+                                = ${escHtml(formatCurrency(msrGrandTotal))} \u00f7 12
+                            </span>
+                        </div>
 
                     </div>
                 </div>
