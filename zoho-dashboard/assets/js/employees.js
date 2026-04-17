@@ -153,7 +153,7 @@ $(function () {
     // Detail panel loading
     // -------------------------------------------------------------------------
 
-    function loadDetail(itemId) {
+    function loadDetail(itemId, forceRefresh) {
         // Destroy any active charts before swapping content.
         Object.keys(_charts).forEach(k => {
             _charts[k].destroy();
@@ -163,8 +163,9 @@ $(function () {
         const $detail = $('#app-detail');
         $detail.html('<div class="detail-loading"><span class="spinner"></span></div>');
 
+        const refresh = forceRefresh ? '&refresh=1' : '';
         $.when(
-            $.getJSON(PROXY + '?endpoint=books_item_detail&item_id=' + encodeURIComponent(itemId)),
+            $.getJSON(PROXY + '?endpoint=books_item_detail&item_id=' + encodeURIComponent(itemId) + refresh),
             $.getJSON(PROXY + '?endpoint=books_invoices_by_item&item_id=' + encodeURIComponent(itemId)),
         ).done(function (itemDetailRes, invoicesRes) {
             const item     = itemDetailRes[0].data || null;
@@ -175,7 +176,12 @@ $(function () {
                 return;
             }
 
-            renderDetail($detail, item, invoices);
+            // Fetch custom field definitions separately — failure is non-fatal.
+            $.getJSON(PROXY + '?endpoint=books_item_customfields')
+                .always(function (cfDefsRes) {
+                    const cfDefs = Array.isArray(cfDefsRes && cfDefsRes.data) ? cfDefsRes.data : [];
+                    renderDetail($detail, item, invoices, cfDefs);
+                });
 
         }).fail(function (jqXHR) {
             if (jqXHR.status === 401) {
@@ -190,7 +196,7 @@ $(function () {
     // Detail panel rendering
     // -------------------------------------------------------------------------
 
-    function renderDetail($detail, item, invoices) {
+    function renderDetail($detail, item, invoices, cfDefs) {
         const statusCls  = (item.status || '').toLowerCase() === 'active' ? 'badge-active' : 'badge-stopped';
         const statusText = capitalise(item.status || 'unknown');
 
@@ -276,17 +282,19 @@ $(function () {
             </div>`;
 
         // ----- MSR tab -----
-        const allCustomFields = (item.custom_fields || [])
-            .filter(cf => cf.value !== '' && cf.value !== null && cf.value !== undefined);
-
-        // Find the MSR custom field by label.
-        const msrField = allCustomFields.find(cf => {
+        function isMsrField(cf) {
             const lbl = (cf.label || '').toLowerCase();
             return lbl.includes('msr')
                 || lbl.includes('monthly support')
                 || lbl.includes('support requirement')
                 || lbl.includes('support req');
-        });
+        }
+        // Find MSR field in the item's own custom_fields first (has the value).
+        // Fall back to the org-level custom field definitions (gives us the ID
+        // even when the item has no value set — Zoho omits empty fields).
+        const msrField = (item.custom_fields || []).find(isMsrField)
+                      || (Array.isArray(cfDefs) ? cfDefs : []).find(isMsrField)
+                      || null;
 
         // Parse the MSR field value.
         // Zoho stores it as HTML: <div><p>header row</p><p>data row</p>…</div>
@@ -393,7 +401,7 @@ $(function () {
 
 
         // ----- Reports tab -----
-        const rpt = buildReportData(invoices);
+        const rpt = buildReportData(invoices, msrMonthlyRequired);
         const currentYear = new Date().getFullYear();
         const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -447,6 +455,7 @@ $(function () {
                             <button id="btn-msr-edit" class="btn-msr-action">Edit</button>
                             <button id="btn-msr-save" class="btn-msr-action btn-msr-save is-hidden">Save</button>
                             <button id="btn-msr-cancel" class="btn-msr-action btn-msr-cancel is-hidden">Cancel</button>
+                            <button id="btn-msr-refresh" class="btn-msr-action btn-msr-refresh" title="Reload from Zoho Books">&#8635; Refresh</button>
                             <span id="msr-save-status" class="msr-save-status"></span>
                         </div>
 
@@ -460,7 +469,7 @@ $(function () {
                                     <tr class="msr-col-header">
                                         ${lcColHeaders}
                                     </tr>
-                                    ${lcDataRows || `<tr class="lc-data-row"><td colspan="${lcColCount}" class="detail-empty-msg">No data.</td></tr>`}
+                                    ${lcDataRows || `<tr class="msr-placeholder-row"><td colspan="${lcColCount}" class="detail-empty-msg">No data.</td></tr>`}
                                     <tr class="lc-total-row total-row">
                                         <td>Total</td>
                                         ${lcHeaders.slice(1, msrTermCol).map(() => '<td></td>').join('')}
@@ -476,7 +485,7 @@ $(function () {
                                         <th class="amount-cell">Amount</th>
                                         ${Array(lcColCount - 2).fill('<th></th>').join('')}
                                     </tr>
-                                    ${extrasRows.length > 0 ? exDataRows : `<tr class="ex-data-row"><td colspan="${lcColCount}" class="detail-empty-msg">No extras.</td></tr>`}
+                                    ${extrasRows.length > 0 ? exDataRows : `<tr class="msr-placeholder-row"><td colspan="${lcColCount}" class="detail-empty-msg">No extras.</td></tr>`}
                                     <tr class="ex-total-row total-row">
                                         <td>Total</td>
                                         <td class="amount-cell ex-term-total">${escHtml(formatCurrency(exTermTotal))}</td>
@@ -624,6 +633,9 @@ $(function () {
                 $(this).append('<td class="msr-del-cell"><button type="button" class="btn-msr-del-row" title="Delete row">&times;</button></td>');
             });
 
+            // Remove any previously inserted add-row buttons before adding fresh ones.
+            $layout.find('tr.msr-add-row-tr').remove();
+
             // Add "Add Row" rows after each section's total row
             const addLcRow = `<tr class="msr-add-row-tr lc-add-tr">
                 <td colspan="${colCount + 1}">
@@ -686,7 +698,7 @@ $(function () {
             lines.push(csvRow(pad(hdEX, colCount)));
             exRows.forEach(r => lines.push(csvRow(pad(r, colCount))));
 
-            return '<div><p>' + lines.join('</p><p>') + '</p></div>';
+            return lines.join('\n');
         }
 
         function msrSave() {
@@ -695,6 +707,12 @@ $(function () {
             // Use closure variables for item ID and MSR field ID.
             const itemId   = String(item.item_id || '');
             const fieldId  = String(msrField ? (msrField.customfield_id || msrField.field_id || '') : '');
+
+            if (!itemId || !fieldId) {
+                $status.text('Cannot save: MSR custom field not found on this item in Zoho Books.').addClass('msr-status-err');
+                return;
+            }
+
             const value    = msrSerialize();
 
             $layout.find('#btn-msr-save').prop('disabled', true).text('Saving\u2026');
@@ -721,8 +739,11 @@ $(function () {
             });
         }
 
+        // Unbind any stale handlers from a previous renderDetail call before rebinding.
+        $detail.off('input.msr click.msr');
+
         // Live computation: Yearly = Monthly × 12, Term = Yearly × Multiplier
-        $detail.on('input', 'tr.lc-data-row td[contenteditable]', function () {
+        $detail.on('input.msr', 'tr.lc-data-row td[contenteditable]', function () {
             const $tds       = $(this).closest('tr').find('td:not(.msr-del-cell)');
             const monthly    = parseMsrAmt($tds.eq(1).text());
             const multiplier = Math.max(1, parseFloat($tds.eq(3).text().replace(/[^0-9.]/g, '')) || 1);
@@ -732,15 +753,18 @@ $(function () {
             $tds.eq(4).text(formatCurrency(term));
         });
 
-        $detail.on('click', '#btn-msr-edit',   msrEnterEdit);
-        $detail.on('click', '#btn-msr-save',   msrSave);
-        $detail.on('click', '#btn-msr-cancel', msrCancelEdit);
+        $detail.on('click.msr', '#btn-msr-edit',    msrEnterEdit);
+        $detail.on('click.msr', '#btn-msr-save',    msrSave);
+        $detail.on('click.msr', '#btn-msr-cancel',  msrCancelEdit);
+        $detail.on('click.msr', '#btn-msr-refresh', function () {
+            loadDetail(selectedId, true);
+        });
 
-        $detail.on('click', '.btn-msr-del-row', function () {
+        $detail.on('click.msr', '.btn-msr-del-row', function () {
             $(this).closest('tr').remove();
         });
 
-        $detail.on('click', '.btn-msr-add-row', function () {
+        $detail.on('click.msr', '.btn-msr-add-row', function () {
             const section  = $(this).data('section');
             const $layout  = $detail.find('.msr-layout');
             const colCount = parseInt($layout.data('lcColCount')) || 5;
@@ -755,15 +779,19 @@ $(function () {
                 }).join('');
                 const $row = $(`<tr class="lc-data-row">${cols}<td class="msr-del-cell"><button type="button" class="btn-msr-del-row" title="Delete row">&times;</button></td></tr>`);
                 $(this).closest('tr').before($row);
+                // Remove "No data" placeholder now that a real row exists.
+                $detail.find('.msr-layout tr.msr-placeholder-row').first().remove();
                 $row.find('td').first().focus();
             } else {
                 const $row = $(`<tr class="ex-data-row">
                     <td contenteditable="true" class="msr-cell-edit"></td>
-                    <td class="amount-cell" contenteditable="true" class="msr-cell-edit"></td>
+                    <td class="amount-cell msr-cell-edit" contenteditable="true"></td>
                     ${Array(colCount - 2).fill('<td></td>').join('')}
                     <td class="msr-del-cell"><button type="button" class="btn-msr-del-row" title="Delete row">&times;</button></td>
                 </tr>`);
                 $(this).closest('tr').before($row);
+                // Remove "No extras" placeholder now that a real row exists.
+                $detail.find('.msr-layout tr.msr-placeholder-row').last().remove();
                 $row.find('td').first().focus();
             }
         });
@@ -792,7 +820,7 @@ $(function () {
      * Compute all report metrics from the employee's paid invoices array.
      * Each invoice: { invoice_id, invoice_number, date, customer_name, total }
      */
-    function buildReportData(invoices) {
+    function buildReportData(invoices, msrMonthly) {
         const currentYear = new Date().getFullYear();
 
         // ── 1. Monthly income for current year ──────────────────────────────
@@ -809,27 +837,13 @@ $(function () {
         const cumulativeIncome = monthlyIncome.map(v => { running += v; return running; });
         const yearTotal = cumulativeIncome[11];
 
-        // ── 3. Yearly support target ─────────────────────────────────────────
-        // Per donor: consistent amount = average invoice total across all invoices.
-        // Yearly support per donor = consistent amount × 12.
-        const donorAmts = {};
-        invoices.forEach(inv => {
-            const d = inv.customer_name || 'Unknown';
-            if (!donorAmts[d]) donorAmts[d] = [];
-            donorAmts[d].push(parseFloat(inv.total || 0));
-        });
-        let totalYearlySupport = 0;
-        Object.values(donorAmts).forEach(amounts => {
-            const avg = amounts.reduce((s, a) => s + a, 0) / amounts.length;
-            totalYearlySupport += avg * 12;
-        });
+        // ── 3. Yearly support target — from MSR Monthly Support Required × 12 ──
+        const totalYearlySupport = (msrMonthly || 0) * 12;
 
         // ── 4. Balance per month = Yearly Support − cumulative income ────────
         const balance = cumulativeIncome.map(c => totalYearlySupport - c);
 
-        // ── 5. Pie chart — average annual income across recorded years ────────
-        // Percent Funded    = avg annual income / Yearly Support × 100
-        // Percent Outstanding = 100 − Funded
+        // ── 5. Pie chart — current year income vs MSR yearly target ──────────
         const yearTotals = {};
         invoices.forEach(inv => {
             if (!inv.date) return;

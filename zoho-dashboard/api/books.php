@@ -63,6 +63,59 @@ function books_getItemDetail(string $token, string $itemId): array
 }
 
 /**
+ * Fetch custom field definitions for items from Zoho Books settings.
+ * Returns the full array of custom field objects (each has customfield_id, label, etc.).
+ * Useful for getting field IDs when an item has no value set for that field.
+ */
+function books_getItemCustomFields(string $token): array
+{
+    $cfg         = get_config();
+    $cacheDir    = rtrim($cfg['cache_dir'], '/\\');
+    $msrKeywords = ['msr', 'monthly support', 'support requirement', 'support req'];
+
+    $normalize = function (array $cf): array {
+        $id = $cf['customfield_id'] ?? $cf['field_id'] ?? '';
+        return ['customfield_id' => $id, 'field_id' => $id, 'label' => $cf['label'] ?? ''];
+    };
+
+    // 1. Scan existing item-detail cache files — zero extra API calls.
+    foreach (glob($cacheDir . '/books_item_detail_*.json') as $file) {
+        $payload = @json_decode(@file_get_contents($file), true);
+        foreach ($payload['data']['custom_fields'] ?? [] as $cf) {
+            $lbl = strtolower($cf['label'] ?? '');
+            foreach ($msrKeywords as $kw) {
+                if (str_contains($lbl, $kw)) {
+                    return [$normalize($cf)];
+                }
+            }
+        }
+    }
+
+    // 2. Fallback: ask Zoho Books settings API for item custom field definitions.
+    // Zoho returns the full module map: { "item": [...], "invoice": [...], ... }
+    $baseUrl = rtrim($cfg['books_api_base'], '/');
+    $orgQs   = http_build_query(['organization_id' => $cfg['books_org_id']]);
+    try {
+        $url    = "{$baseUrl}/settings/customfields?{$orgQs}";
+        $d      = books_get($token, $url);
+        // Fields for items live under the 'item' key in the response.
+        $fields = $d['item'] ?? $d['customfields'] ?? $d['custom_fields'] ?? [];
+        foreach ($fields as $cf) {
+            $lbl = strtolower($cf['label'] ?? '');
+            foreach ($msrKeywords as $kw) {
+                if (str_contains($lbl, $kw)) {
+                    return [$normalize($cf)];
+                }
+            }
+        }
+    } catch (RuntimeException $e) {
+        error_log('books_getItemCustomFields settings error: ' . $e->getMessage());
+    }
+
+    return [];
+}
+
+/**
  * Return a map of item_id => true for every item whose invoice cache file
  * exists on disk and contains at least one invoice record.
  *
