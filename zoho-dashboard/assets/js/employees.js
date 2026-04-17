@@ -275,37 +275,67 @@ $(function () {
             </div>`;
 
         // ----- MSR tab -----
-        // Find the MSR value — look for a custom field whose label contains "MSR".
         const allCustomFields = (item.custom_fields || [])
             .filter(cf => cf.value !== '' && cf.value !== null && cf.value !== undefined);
 
-        const msrField = allCustomFields.find(cf =>
-            (cf.label || '').toUpperCase().includes('MSR')
-        );
-        const msrMonthly  = msrField ? parseFloat(msrField.value || 0) : 0;
+        // Find the MSR custom field (comma-separated value).
+        const msrField = allCustomFields.find(cf => {
+            const lbl = (cf.label || '').toLowerCase();
+            return lbl.includes('msr')
+                || lbl.includes('monthly support')
+                || lbl.includes('support requirement')
+                || lbl.includes('support req');
+        });
+
+        // Parse the comma-separated value into structured rows.
+        // Each item may be "Label: amount", "Label - amount", or a bare number/text.
+        const msrRawValue = msrField ? String(msrField.value || '') : '';
+        const msrParsedRows = msrRawValue
+            .split(',')
+            .map(s => s.trim())
+            .filter(s => s !== '')
+            .map((entry, i) => {
+                // Try "Label: value" or "Label - value" split.
+                const sepIdx = entry.search(/[:\-]/);
+                if (sepIdx > 0) {
+                    const label  = entry.slice(0, sepIdx).trim();
+                    const rawVal = entry.slice(sepIdx + 1).trim();
+                    const amount = parseFloat(rawVal.replace(/[^0-9.]/g, ''));
+                    return { label, rawVal, amount: isNaN(amount) ? null : amount };
+                }
+                // Bare value.
+                const amount = parseFloat(entry.replace(/[^0-9.]/g, ''));
+                return {
+                    label:  'Item ' + (i + 1),
+                    rawVal: entry,
+                    amount: isNaN(amount) ? null : amount,
+                };
+            });
+
+        const msrTotal    = msrParsedRows.reduce((s, r) => s + (r.amount || 0), 0);
+        // Monthly MSR = sum of all parsed row amounts; fall back to item.rate.
+        const msrMonthly  = msrTotal > 0 ? msrTotal : parseFloat(item.rate || 0);
         const msrAnnual   = msrMonthly * 12;
 
-        // Current-year totals for MSR summary.
+        // Current-year totals for summary cards.
         const currentYearInvoices = invoices.filter(inv =>
             inv.date && new Date(inv.date).getFullYear() === new Date().getFullYear()
         );
         const msrYearReceived = currentYearInvoices.reduce(
             (s, inv) => s + parseFloat(inv.total || 0), 0
         );
-        const msrBalance     = msrAnnual - msrYearReceived;
-        const msrFundedPct   = msrAnnual > 0
+        const msrBalance   = msrAnnual - msrYearReceived;
+        const msrFundedPct = msrAnnual > 0
             ? Math.min(100, (msrYearReceived / msrAnnual) * 100) : 0;
 
-        // Build custom-fields table rows (all fields, not just MSR).
-        const msrFieldRows = allCustomFields.length === 0
-            ? '<tr><td colspan="2" class="detail-empty-msg">No custom fields found.</td></tr>'
-            : allCustomFields.map(cf => {
-                const isMsr = (cf.label || '').toUpperCase().includes('MSR');
-                return `<tr${isMsr ? ' class="msr-highlight-row"' : ''}>
-                    <td class="msr-field-label">${escHtml(cf.label || '\u2014')}</td>
-                    <td class="msr-field-value">${escHtml(String(cf.value))}</td>
-                </tr>`;
-            }).join('');
+        // Build the MSR breakdown table rows.
+        const msrTableRows = msrParsedRows.length === 0
+            ? '<tr><td colspan="2" class="detail-empty-msg">No MSR data found on this item.</td></tr>'
+            : msrParsedRows.map(r => `
+                <tr>
+                    <td>${escHtml(r.label)}</td>
+                    <td class="amount-cell">${r.amount !== null ? escHtml(formatCurrency(r.amount)) : escHtml(r.rawVal)}</td>
+                </tr>`).join('');
 
         // ----- Reports tab -----
         const rpt = buildReportData(invoices);
@@ -358,11 +388,13 @@ $(function () {
                 <div class="tab-pane is-hidden" id="tab-msr">
                     <div class="msr-layout">
 
-                        ${msrMonthly > 0 ? `
                         <div class="msr-summary-grid">
                             <div class="msr-summary-card">
                                 <span class="msr-summary-label">Monthly Support Req.</span>
                                 <span class="msr-summary-value">${escHtml(formatCurrency(msrMonthly))}</span>
+                                <span class="msr-summary-source">
+                                    ${msrField ? escHtml(msrField.label) : 'From item rate'}
+                                </span>
                             </div>
                             <div class="msr-summary-card">
                                 <span class="msr-summary-label">Annual Support Req.</span>
@@ -374,26 +406,32 @@ $(function () {
                             </div>
                             <div class="msr-summary-card ${msrBalance > 0 ? 'msr-card-outstanding' : 'msr-card-funded'}">
                                 <span class="msr-summary-label">Balance</span>
-                                <span class="msr-summary-value">${escHtml(formatCurrency(msrBalance))}</span>
+                                <span class="msr-summary-value">${escHtml(formatCurrency(Math.abs(msrBalance)))}</span>
+                                <span class="msr-summary-source">${msrBalance > 0 ? 'Remaining' : 'Fully funded'}</span>
                             </div>
                             <div class="msr-summary-card msr-card-pct">
                                 <span class="msr-summary-label">% Funded</span>
                                 <span class="msr-summary-value">${msrFundedPct.toFixed(1)}%</span>
                                 <div class="msr-progress-bar">
-                                    <div class="msr-progress-fill" style="width:${msrFundedPct.toFixed(1)}%"></div>
+                                    <div class="msr-progress-fill" style="width:${Math.min(100, msrFundedPct).toFixed(1)}%"></div>
                                 </div>
                             </div>
-                        </div>` : ''}
+                        </div>
 
                         <section class="msr-fields-section">
-                            <h3 class="report-title">Item Custom Fields</h3>
+                            <h3 class="report-title">MSR Breakdown</h3>
                             <div class="detail-table-wrap">
                                 <table class="data-table msr-fields-table">
                                     <thead><tr>
-                                        <th>Field</th>
-                                        <th>Value</th>
+                                        <th>Category</th>
+                                        <th class="amount-cell">Amount</th>
                                     </tr></thead>
-                                    <tbody>${msrFieldRows}</tbody>
+                                    <tbody>${msrTableRows}</tbody>
+                                    ${msrParsedRows.length > 1 ? `
+                                    <tfoot><tr class="total-row">
+                                        <td>Total Monthly MSR</td>
+                                        <td class="amount-cell">${escHtml(formatCurrency(msrTotal))}</td>
+                                    </tr></tfoot>` : ''}
                                 </table>
                             </div>
                         </section>

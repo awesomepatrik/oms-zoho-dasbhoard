@@ -875,6 +875,12 @@ body.app-body {
     line-height: 1.2;
 }
 
+.msr-summary-source {
+    font-size: 0.7rem;
+    color: var(--colour-muted);
+    margin-top: 2px;
+}
+
 .msr-card-outstanding { border-left: 3px solid var(--colour-accent); }
 .msr-card-outstanding .msr-summary-value { color: var(--colour-accent); }
 
