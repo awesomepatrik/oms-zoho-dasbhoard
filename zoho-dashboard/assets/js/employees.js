@@ -456,7 +456,7 @@ $(function () {
                                     ${lcDataRows || `<tr><td colspan="${lcColCount}" class="detail-empty-msg">No data.</td></tr>`}
                                     <tr class="total-row">
                                         <td>Total</td>
-                                        ${msrHeaders.slice(1, msrTermCol).map(() => '<td></td>').join('')}
+                                        ${lcHeaders.slice(1, msrTermCol).map(() => '<td></td>').join('')}
                                         <td class="amount-cell">${escHtml(formatCurrency(lcTermTotal))}</td>
                                     </tr>
 
