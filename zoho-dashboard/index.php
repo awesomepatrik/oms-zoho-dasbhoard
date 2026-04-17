@@ -58,7 +58,7 @@ require_auth();
 
     </div>
 
-    <script src="/oms-zoho-dashboard/zoho-dashboard/assets/js/employees.js"></script>
+    <script src="/oms-zoho-dashboard/zoho-dashboard/assets/js/employees.js?v=<?= filemtime(__DIR__ . '/assets/js/employees.js') ?>"></script>
 
 </body>
 </html>
