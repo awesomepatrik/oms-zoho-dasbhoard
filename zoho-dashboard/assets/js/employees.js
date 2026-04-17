@@ -377,17 +377,17 @@ $(function () {
                 `<th${i > 0 ? ' class="amount-cell"' : ''}>${escHtml(h)}</th>`).join('')
             : '<th>Item</th><th class="amount-cell">Monthly</th><th class="amount-cell">Yearly</th><th class="amount-cell">Multiplier</th><th class="amount-cell">Term</th>';
 
-        // Living Cost data rows.
+        // Living Cost data rows (class used by edit mode).
         const lcDataRows = livingRows.map(cells =>
-            `<tr>${cells.map((c, i) =>
+            `<tr class="lc-data-row">${cells.map((c, i) =>
                 `<td${i > 0 ? ' class="amount-cell"' : ''}>${escHtml(c)}</td>`
             ).join('')}</tr>`).join('');
 
         // Extras data rows — use Extras-specific Amount column index.
         const exDataRows = extrasRows.map(cells =>
-            `<tr>
+            `<tr class="ex-data-row">
                 <td>${escHtml(cells[0] || '')}</td>
-                <td class="amount-cell">${escHtml(cells[exAmtIdx] || '\u2014')}</td>
+                <td class="amount-cell">${escHtml(cells[exAmtIdx] || '')}</td>
                 ${Array(lcColCount - 2).fill('<td></td>').join('')}
             </tr>`).join('');
 
@@ -441,7 +441,19 @@ $(function () {
                 </div>
 
                 <div class="tab-pane is-hidden" id="tab-msr">
-                    <div class="msr-layout">
+                    <div class="msr-layout"
+                         data-item-id="${escHtml(String(item.item_id || ''))}"
+                         data-field-id="${escHtml(String(msrField ? (msrField.customfield_id || msrField.field_id || '') : ''))}"
+                         data-lc-col-count="${lcColCount}"
+                         data-lc-headers="${escHtml(JSON.stringify(lcHeaders))}"
+                         data-ex-headers="${escHtml(JSON.stringify(exHeaders))}">
+
+                        <div class="msr-toolbar">
+                            <button id="btn-msr-edit" class="btn-msr-action">Edit</button>
+                            <button id="btn-msr-save" class="btn-msr-action btn-msr-save is-hidden">Save</button>
+                            <button id="btn-msr-cancel" class="btn-msr-action btn-msr-cancel is-hidden">Cancel</button>
+                            <span id="msr-save-status" class="msr-save-status"></span>
+                        </div>
 
                         <div class="detail-table-wrap">
                             <table class="data-table msr-fields-table">
@@ -453,11 +465,11 @@ $(function () {
                                     <tr class="msr-col-header">
                                         ${lcColHeaders}
                                     </tr>
-                                    ${lcDataRows || `<tr><td colspan="${lcColCount}" class="detail-empty-msg">No data.</td></tr>`}
-                                    <tr class="total-row">
+                                    ${lcDataRows || `<tr class="lc-data-row"><td colspan="${lcColCount}" class="detail-empty-msg">No data.</td></tr>`}
+                                    <tr class="lc-total-row total-row">
                                         <td>Total</td>
                                         ${lcHeaders.slice(1, msrTermCol).map(() => '<td></td>').join('')}
-                                        <td class="amount-cell">${escHtml(formatCurrency(lcTermTotal))}</td>
+                                        <td class="amount-cell lc-term-total">${escHtml(formatCurrency(lcTermTotal))}</td>
                                     </tr>
 
                                     <!-- Extras section -->
@@ -469,20 +481,19 @@ $(function () {
                                         <th class="amount-cell">Amount</th>
                                         ${Array(lcColCount - 2).fill('<th></th>').join('')}
                                     </tr>
-                                    ${extrasRows.length > 0 ? exDataRows : `<tr><td colspan="${lcColCount}" class="detail-empty-msg">No extras.</td></tr>`}
-                                    ${extrasRows.length > 0 ? `
-                                    <tr class="total-row">
+                                    ${extrasRows.length > 0 ? exDataRows : `<tr class="ex-data-row"><td colspan="${lcColCount}" class="detail-empty-msg">No extras.</td></tr>`}
+                                    <tr class="ex-total-row total-row">
                                         <td>Total</td>
-                                        <td class="amount-cell">${escHtml(formatCurrency(exTermTotal))}</td>
+                                        <td class="amount-cell ex-term-total">${escHtml(formatCurrency(exTermTotal))}</td>
                                         ${Array(lcColCount - 2).fill('<td></td>').join('')}
-                                    </tr>` : ''}
+                                    </tr>
                                 </tbody>
                             </table>
                         </div>
 
                         <div class="msr-monthly-card">
                             <span class="msr-summary-label">Monthly Support Required</span>
-                            <span class="msr-summary-value">${escHtml(formatCurrency(msrMonthlyRequired))}</span>
+                            <span class="msr-summary-value msr-monthly-required">${escHtml(formatCurrency(msrMonthlyRequired))}</span>
                             <span class="msr-summary-source">
                                 Living Cost ${escHtml(formatCurrency(lcTermTotal))}
                                 + Extras ${escHtml(formatCurrency(exTermTotal))}
@@ -584,6 +595,155 @@ $(function () {
         }
 
         $detail.find('#txn-filter, #txn-field').on('input change', applyTxnFilter);
+
+        // ── MSR Edit mode ────────────────────────────────────────────────────
+
+        function msrEnterEdit() {
+            const $layout = $detail.find('.msr-layout');
+            const colCount = parseInt($layout.data('lcColCount')) || 5;
+
+            // Toggle buttons
+            $layout.find('#btn-msr-edit').addClass('is-hidden');
+            $layout.find('#btn-msr-save, #btn-msr-cancel').removeClass('is-hidden');
+            $layout.find('#msr-save-status').text('');
+
+            // Make LC data cells editable
+            $layout.find('tr.lc-data-row td').attr('contenteditable', 'true').addClass('msr-cell-edit');
+
+            // Make Extras data cells editable (only item + amount — first 2 cols)
+            $layout.find('tr.ex-data-row').each(function () {
+                $(this).find('td').eq(0).attr('contenteditable', 'true').addClass('msr-cell-edit');
+                $(this).find('td').eq(1).attr('contenteditable', 'true').addClass('msr-cell-edit');
+            });
+
+            // Add delete button cell to each data row
+            $layout.find('tr.lc-data-row, tr.ex-data-row').each(function () {
+                $(this).append('<td class="msr-del-cell"><button type="button" class="btn-msr-del-row" title="Delete row">&times;</button></td>');
+            });
+
+            // Add "Add Row" rows after each section's total row
+            const addLcRow = `<tr class="msr-add-row-tr lc-add-tr">
+                <td colspan="${colCount + 1}">
+                    <button type="button" class="btn-msr-add-row" data-section="lc">+ Add Living Cost Row</button>
+                </td></tr>`;
+            const addExRow = `<tr class="msr-add-row-tr ex-add-tr">
+                <td colspan="${colCount + 1}">
+                    <button type="button" class="btn-msr-add-row" data-section="ex">+ Add Extras Row</button>
+                </td></tr>`;
+            $layout.find('tr.lc-total-row').after(addLcRow);
+            $layout.find('tr.ex-total-row').after(addExRow);
+
+            // Widen the delete column on total rows too (just a blank)
+            $layout.find('tr.lc-total-row, tr.ex-total-row').append('<td></td>');
+        }
+
+        function msrCancelEdit() {
+            loadDetail(selectedId);
+        }
+
+        function msrSerialize() {
+            const $layout = $detail.find('.msr-layout');
+            const colCount = parseInt($layout.data('lcColCount')) || 5;
+            const lcHeaders = JSON.parse($layout.attr('data-lc-headers') || '[]');
+            const exHeaders = JSON.parse($layout.attr('data-ex-headers') || '[]');
+
+            function csvCell(val) {
+                val = String(val || '').trim();
+                return val.includes(',') ? '"' + val.replace(/"/g, '""') + '"' : val;
+            }
+            function csvRow(cells) { return cells.map(csvCell).join(','); }
+            function pad(cells, len) {
+                const r = [...cells];
+                while (r.length < len) r.push('');
+                return r.slice(0, len);
+            }
+
+            const lcRows = [];
+            $layout.find('tr.lc-data-row').each(function () {
+                const cells = $(this).find('td:not(.msr-del-cell)').map(function () {
+                    return $(this).text().trim();
+                }).get();
+                if (cells.some(c => c !== '')) lcRows.push(cells);
+            });
+
+            const exRows = [];
+            $layout.find('tr.ex-data-row').each(function () {
+                const item = $(this).find('td:not(.msr-del-cell)').eq(0).text().trim();
+                const amt  = $(this).find('td:not(.msr-del-cell)').eq(1).text().trim();
+                if (item || amt) exRows.push([item, amt]);
+            });
+
+            const lines = [];
+            lines.push(csvRow(pad(['Living Cost'], colCount)));
+            lines.push(csvRow(pad(lcHeaders, colCount)));
+            lcRows.forEach(r => lines.push(csvRow(pad(r, colCount))));
+            lines.push(csvRow(Array(colCount).fill('')));
+            lines.push(csvRow(pad(['Extras'], colCount)));
+            lines.push(csvRow(pad(exHeaders.length ? exHeaders : ['Item', 'Amount'], colCount)));
+            exRows.forEach(r => lines.push(csvRow(pad(r, colCount))));
+
+            return '<div><p>' + lines.join('</p><p>') + '</p></div>';
+        }
+
+        function msrSave() {
+            const $layout  = $detail.find('.msr-layout');
+            const $status  = $layout.find('#msr-save-status');
+            const itemId   = $layout.data('itemId');
+            const fieldId  = $layout.data('fieldId');
+            const value    = msrSerialize();
+
+            $layout.find('#btn-msr-save').prop('disabled', true).text('Saving\u2026');
+            $status.text('').removeClass('msr-status-ok msr-status-err');
+
+            $.ajax({
+                url:         '/oms-zoho-dashboard/zoho-dashboard/api/update_msr.php',
+                type:        'POST',
+                contentType: 'application/json',
+                data:        JSON.stringify({ item_id: itemId, field_id: fieldId, value }),
+            }).done(function (res) {
+                if (res.success) {
+                    $status.text('Saved.').addClass('msr-status-ok');
+                    loadDetail(selectedId);
+                } else {
+                    $status.text('Error: ' + (res.message || 'unknown')).addClass('msr-status-err');
+                    $layout.find('#btn-msr-save').prop('disabled', false).text('Save');
+                }
+            }).fail(function () {
+                $status.text('Save failed. Try again.').addClass('msr-status-err');
+                $layout.find('#btn-msr-save').prop('disabled', false).text('Save');
+            });
+        }
+
+        $detail.on('click', '#btn-msr-edit',   msrEnterEdit);
+        $detail.on('click', '#btn-msr-save',   msrSave);
+        $detail.on('click', '#btn-msr-cancel', msrCancelEdit);
+
+        $detail.on('click', '.btn-msr-del-row', function () {
+            $(this).closest('tr').remove();
+        });
+
+        $detail.on('click', '.btn-msr-add-row', function () {
+            const section  = $(this).data('section');
+            const $layout  = $detail.find('.msr-layout');
+            const colCount = parseInt($layout.data('lcColCount')) || 5;
+            if (section === 'lc') {
+                const cols = Array(colCount).fill(0).map((_, i) =>
+                    `<td${i > 0 ? ' class="amount-cell"' : ''} contenteditable="true" class="msr-cell-edit"></td>`
+                ).join('');
+                const $row = $(`<tr class="lc-data-row">${cols}<td class="msr-del-cell"><button type="button" class="btn-msr-del-row" title="Delete row">&times;</button></td></tr>`);
+                $(this).closest('tr').before($row);
+                $row.find('td').first().focus();
+            } else {
+                const $row = $(`<tr class="ex-data-row">
+                    <td contenteditable="true" class="msr-cell-edit"></td>
+                    <td class="amount-cell" contenteditable="true" class="msr-cell-edit"></td>
+                    ${Array(colCount - 2).fill('<td></td>').join('')}
+                    <td class="msr-del-cell"><button type="button" class="btn-msr-del-row" title="Delete row">&times;</button></td>
+                </tr>`);
+                $(this).closest('tr').before($row);
+                $row.find('td').first().focus();
+            }
+        });
 
         // Tab switching — initialise charts lazily on first Reports click.
         let reportsReady = false;
