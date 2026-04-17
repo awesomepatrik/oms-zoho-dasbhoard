@@ -291,21 +291,24 @@ $(function () {
         // Parse the MSR field value.
         // Zoho stores it as HTML: <div><p>header row</p><p>data row</p>…</div>
         // Each <p> contains one CSV row; currency values may be quoted: "$7,200.00"
+        // Format (after user edit in Zoho):
+        //   "Living Cost,,,,"          ← LC section label
+        //   "Item,Monthly,Yearly,..."  ← LC column headers
+        //   ...data rows...
+        //   "Extras,,,,"               ← Extras section label
+        //   "Item,Amount,,,"           ← Extras column headers
+        //   ...data rows...
         function parseMsrCsv(raw) {
-            if (!raw || !raw.trim()) return { headers: [], rows: [] };
+            if (!raw || !raw.trim()) return { lcHeaders: [], lcRows: [], exHeaders: [], exRows: [] };
 
-            // Extract lines from <p> tags if the value is HTML, else split on newlines.
             let lines;
             if (raw.includes('<')) {
                 const tmp = document.createElement('div');
                 tmp.innerHTML = raw;
-                lines = Array.from(tmp.querySelectorAll('p'))
-                    .map(p => p.textContent.trim())
-                    .filter(Boolean);
+                lines = Array.from(tmp.querySelectorAll('p')).map(p => p.textContent.trim());
             } else {
-                lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+                lines = raw.split(/\r?\n/).map(l => l.trim());
             }
-            if (!lines.length) return { headers: [], rows: [] };
 
             function parseRow(line) {
                 const cells = [];
@@ -320,48 +323,57 @@ $(function () {
                 return cells;
             }
 
-            const headers = parseRow(lines[0]);
-            // Skip rows where every cell is empty (blank separator lines like ",,,,")
-            const rows = lines.slice(1)
-                .map(parseRow)
-                .filter(cells => cells.some(c => c !== ''));
-            return { headers, rows };
+            const parsed = lines.map(parseRow);
+            const isBlank = r => r.every(c => c === '');
+            const isSection = (r, label) =>
+                r[0].toLowerCase().includes(label.toLowerCase()) && r.slice(1).every(c => c === '');
+
+            // Find section header indices
+            const lcLabelIdx = parsed.findIndex(r => isSection(r, 'living cost'));
+            const exLabelIdx = parsed.findIndex(r => isSection(r, 'extras'));
+
+            // Headers row immediately follows the section label
+            const lcHeaders = lcLabelIdx >= 0 ? parsed[lcLabelIdx + 1] || [] : [];
+            const exHeaders = exLabelIdx >= 0 ? parsed[exLabelIdx + 1] || [] : [];
+
+            // Data rows: between header row and next section label, non-blank
+            const lcDataEnd = exLabelIdx >= 0 ? exLabelIdx : parsed.length;
+            const lcRows = parsed
+                .slice(lcLabelIdx >= 0 ? lcLabelIdx + 2 : 0, lcDataEnd)
+                .filter(r => !isBlank(r));
+
+            const exRows = exLabelIdx >= 0
+                ? parsed.slice(exLabelIdx + 2).filter(r => !isBlank(r))
+                : [];
+
+            return { lcHeaders, lcRows, exHeaders, exRows };
         }
-
-        const msrRaw = msrField ? String(msrField.value || '') : '';
-        const { headers: msrHeaders, rows: msrRows } = parseMsrCsv(msrRaw);
-
-        // Locate the Monthly and Yearly columns from the header row.
-        const msrMonthlyCol = msrHeaders.findIndex(h => /monthly/i.test(h) && !/multi/i.test(h));
-        const msrYearlyCol  = msrHeaders.findIndex(h => /yearly/i.test(h)  && !/multi/i.test(h));
 
         function parseMsrAmt(str) {
             const n = parseFloat((str || '').replace(/[^0-9.]/g, ''));
             return isNaN(n) ? 0 : n;
         }
 
-        // Split rows into Living Cost section and Extras section.
-        // Rows before "Extras" header belong to Living Cost; rows after (excl. "Total") are Extras.
-        const msrTermCol   = msrHeaders.length > 0 ? msrHeaders.length - 1 : 4;
-        const extrasIdx    = msrRows.findIndex(cells => /^extras$/i.test((cells[0] || '').trim()));
-        const livingRows   = (extrasIdx >= 0 ? msrRows.slice(0, extrasIdx) : msrRows)
-            .filter(cells => !/^total$/i.test((cells[0] || '').trim()));
-        const extrasRows   = extrasIdx >= 0
-            ? msrRows.slice(extrasIdx + 1).filter(cells => !/^total$/i.test((cells[0] || '').trim()))
-            : [];
+        const msrRaw = msrField ? String(msrField.value || '') : '';
+        const { lcHeaders, lcRows, exHeaders, exRows: extrasRows } = parseMsrCsv(msrRaw);
+        const livingRows = lcRows;
 
-        // Totals: sum the Term (last) column for each section.
+        // Term column = last column of LC headers; Amount column from Extras headers.
+        const msrTermCol   = lcHeaders.length > 0 ? lcHeaders.length - 1 : 4;
+        const exAmountCol  = exHeaders.findIndex(h => /amount/i.test(h));
+        const exAmtIdx     = exAmountCol >= 0 ? exAmountCol : 1;
+
         const lcTermTotal  = livingRows.reduce((s, r) => s + parseMsrAmt(r[msrTermCol] || ''), 0);
-        const exTermTotal  = extrasRows.reduce((s, r) => s + parseMsrAmt(r[msrTermCol] || ''), 0);
+        const exTermTotal  = extrasRows.reduce((s, r) => s + parseMsrAmt(r[exAmtIdx] || ''), 0);
         const msrGrandTotal = lcTermTotal + exTermTotal;
         const msrMonthlyRequired = msrGrandTotal > 0 ? msrGrandTotal / 12 : parseFloat(item.rate || 0);
 
-        // Column count for the combined spreadsheet table (Living Cost columns).
-        const lcColCount = msrHeaders.length || 5;
+        // Column count driven by LC headers (the wider section).
+        const lcColCount = lcHeaders.length || 5;
 
-        // Column headers row for the Living Cost section.
-        const lcColHeaders = msrHeaders.length
-            ? msrHeaders.map((h, i) =>
+        // Living Cost column headers row.
+        const lcColHeaders = lcHeaders.length
+            ? lcHeaders.map((h, i) =>
                 `<th${i > 0 ? ' class="amount-cell"' : ''}>${escHtml(h)}</th>`).join('')
             : '<th>Item</th><th class="amount-cell">Monthly</th><th class="amount-cell">Yearly</th><th class="amount-cell">Multiplier</th><th class="amount-cell">Term</th>';
 
@@ -371,11 +383,11 @@ $(function () {
                 `<td${i > 0 ? ' class="amount-cell"' : ''}>${escHtml(c)}</td>`
             ).join('')}</tr>`).join('');
 
-        // Extras data rows (only Item + Amount columns visible, rest blank).
+        // Extras data rows — use Extras-specific Amount column index.
         const exDataRows = extrasRows.map(cells =>
             `<tr>
                 <td>${escHtml(cells[0] || '')}</td>
-                <td class="amount-cell">${escHtml(cells[msrTermCol] || '\u2014')}</td>
+                <td class="amount-cell">${escHtml(cells[exAmtIdx] || '\u2014')}</td>
                 ${Array(lcColCount - 2).fill('<td></td>').join('')}
             </tr>`).join('');
 
