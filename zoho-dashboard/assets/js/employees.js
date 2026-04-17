@@ -607,8 +607,16 @@ $(function () {
             $layout.find('#btn-msr-save, #btn-msr-cancel').removeClass('is-hidden');
             $layout.find('#msr-save-status').text('');
 
-            // Make LC data cells editable
-            $layout.find('tr.lc-data-row td').attr('contenteditable', 'true').addClass('msr-cell-edit');
+            // Make LC data cells editable — Item (0), Monthly (1), Multiplier (3) only.
+            // Yearly (2) and Term (4) are computed automatically and must not be edited.
+            $layout.find('tr.lc-data-row').each(function () {
+                const $tds = $(this).find('td');
+                $tds.eq(0).attr('contenteditable', 'true').addClass('msr-cell-edit');
+                $tds.eq(1).attr('contenteditable', 'true').addClass('msr-cell-edit');
+                $tds.eq(2).addClass('msr-cell-computed');
+                $tds.eq(3).attr('contenteditable', 'true').addClass('msr-cell-edit');
+                $tds.eq(4).addClass('msr-cell-computed');
+            });
 
             // Make Extras data cells editable (only item + amount — first 2 cols)
             $layout.find('tr.ex-data-row').each(function () {
@@ -714,6 +722,17 @@ $(function () {
             });
         }
 
+        // Live computation: Yearly = Monthly × 12, Term = Yearly × Multiplier
+        $detail.on('input', 'tr.lc-data-row td[contenteditable]', function () {
+            const $tds       = $(this).closest('tr').find('td:not(.msr-del-cell)');
+            const monthly    = parseMsrAmt($tds.eq(1).text());
+            const multiplier = Math.max(1, parseFloat($tds.eq(3).text().replace(/[^0-9.]/g, '')) || 1);
+            const yearly     = monthly * 12;
+            const term       = yearly * multiplier;
+            $tds.eq(2).text(formatCurrency(yearly));
+            $tds.eq(4).text(formatCurrency(term));
+        });
+
         $detail.on('click', '#btn-msr-edit',   msrEnterEdit);
         $detail.on('click', '#btn-msr-save',   msrSave);
         $detail.on('click', '#btn-msr-cancel', msrCancelEdit);
@@ -727,9 +746,14 @@ $(function () {
             const $layout  = $detail.find('.msr-layout');
             const colCount = parseInt($layout.data('lcColCount')) || 5;
             if (section === 'lc') {
-                const cols = Array(colCount).fill(0).map((_, i) =>
-                    `<td${i > 0 ? ' class="amount-cell"' : ''} contenteditable="true" class="msr-cell-edit"></td>`
-                ).join('');
+                // cols: 0=Item(edit), 1=Monthly(edit), 2=Yearly(computed), 3=Multiplier(edit), 4=Term(computed)
+                const cols = Array(colCount).fill(0).map((_, i) => {
+                    const amtCls  = i > 0 ? ' amount-cell' : '';
+                    const computed = i === 2 || i === 4;
+                    return computed
+                        ? `<td class="${amtCls} msr-cell-computed"></td>`
+                        : `<td class="${amtCls} msr-cell-edit" contenteditable="true"></td>`;
+                }).join('');
                 const $row = $(`<tr class="lc-data-row">${cols}<td class="msr-del-cell"><button type="button" class="btn-msr-del-row" title="Delete row">&times;</button></td></tr>`);
                 $(this).closest('tr').before($row);
                 $row.find('td').first().focus();

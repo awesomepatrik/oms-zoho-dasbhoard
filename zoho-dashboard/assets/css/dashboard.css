@@ -868,6 +868,14 @@ body.app-body {
 .msr-status-ok  { color: var(--colour-success); }
 .msr-status-err { color: var(--colour-accent); }
 
+/* Computed cells (Yearly, Term) — read-only, visually distinct */
+.msr-cell-computed {
+    background: rgba(0, 0, 0, 0.03);
+    color: var(--colour-muted);
+    font-style: italic;
+    user-select: none;
+}
+
 /* Editable cells */
 .msr-cell-edit {
     outline: none;
