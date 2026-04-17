@@ -912,21 +912,46 @@ body.app-body {
     max-width: 100%;
 }
 
-/* Custom fields table */
-.msr-fields-section {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-
+/* MSR spreadsheet table */
 .msr-fields-table {
     width: 100%;
+    border-collapse: collapse;
 }
 
-/* First column (category) is wider; amount columns are right-aligned and compact */
+.msr-fields-table td,
+.msr-fields-table th {
+    padding: 6px 12px;
+    border: 1px solid var(--colour-border);
+    font-size: 0.85rem;
+}
+
+/* First column wider */
 .msr-fields-table td:first-child,
 .msr-fields-table th:first-child {
-    min-width: 200px;
+    min-width: 220px;
+}
+
+/* Section header row — bold label spanning all columns */
+.msr-fields-table tr.msr-section-header td {
+    font-weight: 700;
+    font-size: 0.9rem;
+    background: var(--colour-card);
+    border-top: 2px solid var(--colour-border);
+    padding: 10px 12px 6px;
+}
+
+/* Column header row inside tbody */
+.msr-fields-table tr.msr-col-header th,
+.msr-fields-table tr.msr-col-header td {
+    font-weight: 600;
+    background: var(--colour-sidebar);
+    color: var(--colour-text);
+    text-align: left;
+}
+
+.msr-fields-table tr.msr-col-header th.amount-cell,
+.msr-fields-table tr.msr-col-header td.amount-cell {
+    text-align: right;
 }
 
 .msr-field-label {

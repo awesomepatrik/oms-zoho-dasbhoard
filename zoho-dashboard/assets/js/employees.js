@@ -356,39 +356,28 @@ $(function () {
         const msrGrandTotal = lcTermTotal + exTermTotal;
         const msrMonthlyRequired = msrGrandTotal > 0 ? msrGrandTotal / 12 : parseFloat(item.rate || 0);
 
-        // Build Living Cost table (full 5 columns from header row).
-        const msrTheadCells = msrHeaders.length
+        // Column count for the combined spreadsheet table (Living Cost columns).
+        const lcColCount = msrHeaders.length || 5;
+
+        // Column headers row for the Living Cost section.
+        const lcColHeaders = msrHeaders.length
             ? msrHeaders.map((h, i) =>
                 `<th${i > 0 ? ' class="amount-cell"' : ''}>${escHtml(h)}</th>`).join('')
-            : '<th>Category</th><th class="amount-cell">Monthly</th><th class="amount-cell">Yearly</th><th class="amount-cell">Multiplier</th><th class="amount-cell">Term</th>';
+            : '<th>Item</th><th class="amount-cell">Monthly</th><th class="amount-cell">Yearly</th><th class="amount-cell">Multiplier</th><th class="amount-cell">Term</th>';
 
-        const buildRows = (rows) => rows.length === 0
-            ? `<tr><td colspan="${msrHeaders.length || 2}" class="detail-empty-msg">No data.</td></tr>`
-            : rows.map(cells =>
-                `<tr>${cells.map((c, i) =>
-                    `<td${i > 0 ? ' class="amount-cell"' : ''}>${escHtml(c)}</td>`
-                ).join('')}</tr>`).join('');
+        // Living Cost data rows.
+        const lcDataRows = livingRows.map(cells =>
+            `<tr>${cells.map((c, i) =>
+                `<td${i > 0 ? ' class="amount-cell"' : ''}>${escHtml(c)}</td>`
+            ).join('')}</tr>`).join('');
 
-        const lcTotalCell = `<tfoot><tr class="total-row">
-            <td>Total</td>
-            ${msrHeaders.slice(1, msrTermCol).map(() => '<td class="amount-cell">\u2014</td>').join('')}
-            <td class="amount-cell">${escHtml(formatCurrency(lcTermTotal))}</td>
-        </tr></tfoot>`;
-
-        // Extras table uses 2 columns: Description + Term (Amount).
-        const exTbodyRows = extrasRows.length === 0
-            ? '<tr><td colspan="2" class="detail-empty-msg">No extras.</td></tr>'
-            : extrasRows.map(cells =>
-                `<tr>
-                    <td>${escHtml(cells[0] || '')}</td>
-                    <td class="amount-cell">${escHtml(cells[msrTermCol] || '\u2014')}</td>
-                </tr>`).join('');
-        const exTotalRow = extrasRows.length > 0
-            ? `<tfoot><tr class="total-row">
-                <td>Total</td>
-                <td class="amount-cell">${escHtml(formatCurrency(exTermTotal))}</td>
-               </tr></tfoot>`
-            : '';
+        // Extras data rows (only Item + Amount columns visible, rest blank).
+        const exDataRows = extrasRows.map(cells =>
+            `<tr>
+                <td>${escHtml(cells[0] || '')}</td>
+                <td class="amount-cell">${escHtml(cells[msrTermCol] || '\u2014')}</td>
+                ${Array(lcColCount - 2).fill('<td></td>').join('')}
+            </tr>`).join('');
 
 
         // ----- Reports tab -----
@@ -442,30 +431,42 @@ $(function () {
                 <div class="tab-pane is-hidden" id="tab-msr">
                     <div class="msr-layout">
 
-                        <section class="msr-fields-section">
-                            <h3 class="report-title">Living Cost</h3>
-                            <div class="detail-table-wrap">
-                                <table class="data-table msr-fields-table">
-                                    <thead><tr>${msrTheadCells}</tr></thead>
-                                    <tbody>${buildRows(livingRows)}</tbody>
-                                    ${livingRows.length > 0 ? lcTotalCell : ''}
-                                </table>
-                            </div>
-                        </section>
+                        <div class="detail-table-wrap">
+                            <table class="data-table msr-fields-table">
+                                <tbody>
+                                    <!-- Living Cost section -->
+                                    <tr class="msr-section-header">
+                                        <td colspan="${lcColCount}">Living Cost</td>
+                                    </tr>
+                                    <tr class="msr-col-header">
+                                        ${lcColHeaders}
+                                    </tr>
+                                    ${lcDataRows || `<tr><td colspan="${lcColCount}" class="detail-empty-msg">No data.</td></tr>`}
+                                    <tr class="total-row">
+                                        <td>Total</td>
+                                        ${msrHeaders.slice(1, msrTermCol).map(() => '<td></td>').join('')}
+                                        <td class="amount-cell">${escHtml(formatCurrency(lcTermTotal))}</td>
+                                    </tr>
 
-                        <section class="msr-fields-section">
-                            <h3 class="report-title">Extras</h3>
-                            <div class="detail-table-wrap">
-                                <table class="data-table msr-fields-table">
-                                    <thead><tr>
-                                        <th>Description</th>
+                                    <!-- Extras section -->
+                                    <tr class="msr-section-header">
+                                        <td colspan="${lcColCount}">Extras</td>
+                                    </tr>
+                                    <tr class="msr-col-header">
+                                        <th>Item</th>
                                         <th class="amount-cell">Amount</th>
-                                    </tr></thead>
-                                    <tbody>${exTbodyRows}</tbody>
-                                    ${exTotalRow}
-                                </table>
-                            </div>
-                        </section>
+                                        ${Array(lcColCount - 2).fill('<th></th>').join('')}
+                                    </tr>
+                                    ${extrasRows.length > 0 ? exDataRows : `<tr><td colspan="${lcColCount}" class="detail-empty-msg">No extras.</td></tr>`}
+                                    ${extrasRows.length > 0 ? `
+                                    <tr class="total-row">
+                                        <td>Total</td>
+                                        <td class="amount-cell">${escHtml(formatCurrency(exTermTotal))}</td>
+                                        ${Array(lcColCount - 2).fill('<td></td>').join('')}
+                                    </tr>` : ''}
+                                </tbody>
+                            </table>
+                        </div>
 
                         <div class="msr-monthly-card">
                             <span class="msr-summary-label">Monthly Support Required</span>
