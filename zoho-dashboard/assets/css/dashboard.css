@@ -832,6 +832,110 @@ body.app-body {
 }
 
 /* ---------------------------------------------------------
+   MSR tab
+   --------------------------------------------------------- */
+
+.msr-layout {
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+}
+
+/* Summary cards row */
+.msr-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 14px;
+}
+
+.msr-summary-card {
+    background: var(--colour-card);
+    border: 1px solid var(--colour-border);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    box-shadow: var(--shadow);
+}
+
+.msr-summary-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--colour-muted);
+}
+
+.msr-summary-value {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--colour-text);
+    line-height: 1.2;
+}
+
+.msr-card-outstanding { border-left: 3px solid var(--colour-accent); }
+.msr-card-outstanding .msr-summary-value { color: var(--colour-accent); }
+
+.msr-card-funded { border-left: 3px solid var(--colour-success); }
+.msr-card-funded  .msr-summary-value { color: var(--colour-success); }
+
+.msr-card-pct { border-left: 3px solid var(--colour-secondary); }
+
+/* Progress bar inside the % funded card */
+.msr-progress-bar {
+    height: 6px;
+    background: var(--colour-border);
+    border-radius: 99px;
+    margin-top: 6px;
+    overflow: hidden;
+}
+
+.msr-progress-fill {
+    height: 100%;
+    background: var(--colour-secondary);
+    border-radius: 99px;
+    transition: width 0.4s ease;
+    max-width: 100%;
+}
+
+/* Custom fields table */
+.msr-fields-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.msr-fields-table {
+    width: 100%;
+    max-width: 560px;
+}
+
+.msr-field-label {
+    font-weight: 500;
+    color: var(--colour-muted);
+    width: 220px;
+}
+
+.msr-field-value {
+    color: var(--colour-text);
+}
+
+.msr-highlight-row {
+    background: rgba(46, 134, 193, 0.06);
+}
+
+.msr-highlight-row .msr-field-label {
+    color: var(--colour-secondary);
+    font-weight: 600;
+}
+
+.msr-highlight-row .msr-field-value {
+    font-weight: 600;
+}
+
+/* ---------------------------------------------------------
    Reports tab
    --------------------------------------------------------- */
 
