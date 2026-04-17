@@ -458,6 +458,12 @@ $(function () {
                                         ${Array(lcColCount - 2).fill('<th></th>').join('')}
                                     </tr>
                                     ${extrasRows.length > 0 ? exDataRows : `<tr><td colspan="${lcColCount}" class="detail-empty-msg">No extras.</td></tr>`}
+                                    ${extrasRows.length > 0 ? `
+                                    <tr class="total-row">
+                                        <td>Total</td>
+                                        <td class="amount-cell">${escHtml(formatCurrency(exTermTotal))}</td>
+                                        ${Array(lcColCount - 2).fill('<td></td>').join('')}
+                                    </tr>` : ''}
                                 </tbody>
                             </table>
                         </div>
