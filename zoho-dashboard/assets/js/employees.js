@@ -441,12 +441,7 @@ $(function () {
                 </div>
 
                 <div class="tab-pane is-hidden" id="tab-msr">
-                    <div class="msr-layout"
-                         data-item-id="${escHtml(String(item.item_id || ''))}"
-                         data-field-id="${escHtml(String(msrField ? (msrField.customfield_id || msrField.field_id || '') : ''))}"
-                         data-lc-col-count="${lcColCount}"
-                         data-lc-headers="${escHtml(JSON.stringify(lcHeaders))}"
-                         data-ex-headers="${escHtml(JSON.stringify(exHeaders))}">
+                    <div class="msr-layout" data-lc-col-count="${lcColCount}">
 
                         <div class="msr-toolbar">
                             <button id="btn-msr-edit" class="btn-msr-action">Edit</button>
@@ -650,10 +645,11 @@ $(function () {
         }
 
         function msrSerialize() {
-            const $layout = $detail.find('.msr-layout');
+            const $layout  = $detail.find('.msr-layout');
             const colCount = parseInt($layout.data('lcColCount')) || 5;
-            const lcHeaders = JSON.parse($layout.attr('data-lc-headers') || '[]');
-            const exHeaders = JSON.parse($layout.attr('data-ex-headers') || '[]');
+            // Use closure variables — avoids broken JSON-in-HTML-attribute encoding.
+            const hdLC = lcHeaders.length ? lcHeaders : ['Item','Monthly','Yearly','Yearly Multiplier','Term'];
+            const hdEX = exHeaders.length ? exHeaders : ['Item','Amount'];
 
             function csvCell(val) {
                 val = String(val || '').trim();
@@ -676,18 +672,18 @@ $(function () {
 
             const exRows = [];
             $layout.find('tr.ex-data-row').each(function () {
-                const item = $(this).find('td:not(.msr-del-cell)').eq(0).text().trim();
+                const desc = $(this).find('td:not(.msr-del-cell)').eq(0).text().trim();
                 const amt  = $(this).find('td:not(.msr-del-cell)').eq(1).text().trim();
-                if (item || amt) exRows.push([item, amt]);
+                if (desc || amt) exRows.push([desc, amt]);
             });
 
             const lines = [];
             lines.push(csvRow(pad(['Living Cost'], colCount)));
-            lines.push(csvRow(pad(lcHeaders, colCount)));
+            lines.push(csvRow(pad(hdLC, colCount)));
             lcRows.forEach(r => lines.push(csvRow(pad(r, colCount))));
             lines.push(csvRow(Array(colCount).fill('')));
             lines.push(csvRow(pad(['Extras'], colCount)));
-            lines.push(csvRow(pad(exHeaders.length ? exHeaders : ['Item', 'Amount'], colCount)));
+            lines.push(csvRow(pad(hdEX, colCount)));
             exRows.forEach(r => lines.push(csvRow(pad(r, colCount))));
 
             return '<div><p>' + lines.join('</p><p>') + '</p></div>';
@@ -696,8 +692,9 @@ $(function () {
         function msrSave() {
             const $layout  = $detail.find('.msr-layout');
             const $status  = $layout.find('#msr-save-status');
-            const itemId   = $layout.data('itemId');
-            const fieldId  = $layout.data('fieldId');
+            // Use closure variables for item ID and MSR field ID.
+            const itemId   = String(item.item_id || '');
+            const fieldId  = String(msrField ? (msrField.customfield_id || msrField.field_id || '') : '');
             const value    = msrSerialize();
 
             $layout.find('#btn-msr-save').prop('disabled', true).text('Saving\u2026');
@@ -716,8 +713,10 @@ $(function () {
                     $status.text('Error: ' + (res.message || 'unknown')).addClass('msr-status-err');
                     $layout.find('#btn-msr-save').prop('disabled', false).text('Save');
                 }
-            }).fail(function () {
-                $status.text('Save failed. Try again.').addClass('msr-status-err');
+            }).fail(function (jqXHR) {
+                let msg = 'Save failed. Try again.';
+                try { msg = JSON.parse(jqXHR.responseText).message || msg; } catch (e) {}
+                $status.text(msg).addClass('msr-status-err');
                 $layout.find('#btn-msr-save').prop('disabled', false).text('Save');
             });
         }
