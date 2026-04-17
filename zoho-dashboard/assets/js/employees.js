@@ -210,6 +210,7 @@ $(function () {
 
         const customFields = (item.custom_fields || [])
             .filter(cf => cf.value !== '' && cf.value !== null && cf.value !== undefined)
+            .filter(cf => !(cf.label || '').toLowerCase().includes('msr'))
             .map(cf => [cf.label, String(cf.value)]);
 
         const overviewRows = [...coreFields, ...customFields].map(([label, value]) => `
