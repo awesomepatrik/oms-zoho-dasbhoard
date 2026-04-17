@@ -278,7 +278,7 @@ $(function () {
         const allCustomFields = (item.custom_fields || [])
             .filter(cf => cf.value !== '' && cf.value !== null && cf.value !== undefined);
 
-        // Find the MSR custom field (comma-separated value).
+        // Find the MSR custom field by label.
         const msrField = allCustomFields.find(cf => {
             const lbl = (cf.label || '').toLowerCase();
             return lbl.includes('msr')
@@ -287,35 +287,47 @@ $(function () {
                 || lbl.includes('support req');
         });
 
-        // Parse the comma-separated value into structured rows.
-        // Each item may be "Label: amount", "Label - amount", or a bare number/text.
-        const msrRawValue = msrField ? String(msrField.value || '') : '';
-        const msrParsedRows = msrRawValue
-            .split(',')
-            .map(s => s.trim())
-            .filter(s => s !== '')
-            .map((entry, i) => {
-                // Try "Label: value" or "Label - value" split.
-                const sepIdx = entry.search(/[:\-]/);
-                if (sepIdx > 0) {
-                    const label  = entry.slice(0, sepIdx).trim();
-                    const rawVal = entry.slice(sepIdx + 1).trim();
-                    const amount = parseFloat(rawVal.replace(/[^0-9.]/g, ''));
-                    return { label, rawVal, amount: isNaN(amount) ? null : amount };
+        // Parse the field value as a multi-line CSV.
+        // Row 0 is a header row: "Living Cost,Monthly,Yearly,Yearly Multiplier,Term"
+        // Data rows have quoted currency values: OMS Admin Levy,$600.00,"$7,200.00",1,"$7,200.00"
+        function parseMsrCsv(raw) {
+            if (!raw || !raw.trim()) return { headers: [], rows: [] };
+            const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+            if (!lines.length) return { headers: [], rows: [] };
+            function parseRow(line) {
+                const cells = [];
+                let inQ = false, cell = '';
+                for (let i = 0; i < line.length; i++) {
+                    const c = line[i];
+                    if (c === '"') { inQ = !inQ; }
+                    else if (c === ',' && !inQ) { cells.push(cell.trim()); cell = ''; }
+                    else { cell += c; }
                 }
-                // Bare value.
-                const amount = parseFloat(entry.replace(/[^0-9.]/g, ''));
-                return {
-                    label:  'Item ' + (i + 1),
-                    rawVal: entry,
-                    amount: isNaN(amount) ? null : amount,
-                };
-            });
+                cells.push(cell.trim());
+                return cells;
+            }
+            return { headers: parseRow(lines[0]), rows: lines.slice(1).map(parseRow) };
+        }
 
-        const msrTotal    = msrParsedRows.reduce((s, r) => s + (r.amount || 0), 0);
-        // Monthly MSR = sum of all parsed row amounts; fall back to item.rate.
-        const msrMonthly  = msrTotal > 0 ? msrTotal : parseFloat(item.rate || 0);
-        const msrAnnual   = msrMonthly * 12;
+        const msrRaw = msrField ? String(msrField.value || '') : '';
+        const { headers: msrHeaders, rows: msrRows } = parseMsrCsv(msrRaw);
+
+        // Locate the Monthly and Yearly columns from the header row.
+        const msrMonthlyCol = msrHeaders.findIndex(h => /monthly/i.test(h) && !/multi/i.test(h));
+        const msrYearlyCol  = msrHeaders.findIndex(h => /yearly/i.test(h)  && !/multi/i.test(h));
+
+        function parseMsrAmt(str) {
+            const n = parseFloat((str || '').replace(/[^0-9.]/g, ''));
+            return isNaN(n) ? 0 : n;
+        }
+
+        // Totals derived from the CSV; fall back to item.rate when no parsed data.
+        const msrMonthly = msrRows.length && msrMonthlyCol >= 0
+            ? msrRows.reduce((s, row) => s + parseMsrAmt(row[msrMonthlyCol]), 0)
+            : parseFloat(item.rate || 0);
+        const msrAnnual = msrRows.length && msrYearlyCol >= 0
+            ? msrRows.reduce((s, row) => s + parseMsrAmt(row[msrYearlyCol]), 0)
+            : msrMonthly * 12;
 
         // Current-year totals for summary cards.
         const currentYearInvoices = invoices.filter(inv =>
@@ -328,14 +340,31 @@ $(function () {
         const msrFundedPct = msrAnnual > 0
             ? Math.min(100, (msrYearReceived / msrAnnual) * 100) : 0;
 
-        // Build the MSR breakdown table rows.
-        const msrTableRows = msrParsedRows.length === 0
-            ? '<tr><td colspan="2" class="detail-empty-msg">No MSR data found on this item.</td></tr>'
-            : msrParsedRows.map(r => `
-                <tr>
-                    <td>${escHtml(r.label)}</td>
-                    <td class="amount-cell">${r.amount !== null ? escHtml(formatCurrency(r.amount)) : escHtml(r.rawVal)}</td>
-                </tr>`).join('');
+        // Build the MSR breakdown table.
+        const msrColCount   = msrHeaders.length || 2;
+        // Only sum columns whose values look like currency (start with $).
+        const msrIsCurrency = (ci) => msrRows.some(row => /^\$/.test((row[ci] || '').trim()));
+
+        const msrTheadCells = msrHeaders.length
+            ? msrHeaders.map((h, i) =>
+                `<th${i > 0 ? ' class="amount-cell"' : ''}>${escHtml(h)}</th>`).join('')
+            : '<th>Category</th><th class="amount-cell">Monthly</th>';
+
+        const msrTbodyRows = msrRows.length === 0
+            ? `<tr><td colspan="${msrColCount}" class="detail-empty-msg">No MSR data found for this item.</td></tr>`
+            : msrRows.map(cells =>
+                `<tr>${cells.map((c, i) =>
+                    `<td${i > 0 ? ' class="amount-cell"' : ''}>${escHtml(c)}</td>`
+                ).join('')}</tr>`).join('');
+
+        const msrTfootCells = msrHeaders.map((_, i) => {
+            if (i === 0) return '<td>Total</td>';
+            if (!msrIsCurrency(i)) return '<td class="amount-cell">\u2014</td>';
+            const sum = msrRows.reduce((s, row) => s + parseMsrAmt(row[i] || ''), 0);
+            return `<td class="amount-cell">${escHtml(sum > 0 ? formatCurrency(sum) : '\u2014')}</td>`;
+        }).join('');
+        const msrTfoot = msrRows.length > 1
+            ? `<tfoot><tr class="total-row">${msrTfootCells}</tr></tfoot>` : '';
 
         // ----- Reports tab -----
         const rpt = buildReportData(invoices);
@@ -422,16 +451,9 @@ $(function () {
                             <h3 class="report-title">MSR Breakdown</h3>
                             <div class="detail-table-wrap">
                                 <table class="data-table msr-fields-table">
-                                    <thead><tr>
-                                        <th>Category</th>
-                                        <th class="amount-cell">Amount</th>
-                                    </tr></thead>
-                                    <tbody>${msrTableRows}</tbody>
-                                    ${msrParsedRows.length > 1 ? `
-                                    <tfoot><tr class="total-row">
-                                        <td>Total Monthly MSR</td>
-                                        <td class="amount-cell">${escHtml(formatCurrency(msrTotal))}</td>
-                                    </tr></tfoot>` : ''}
+                                    <thead><tr>${msrTheadCells}</tr></thead>
+                                    <tbody>${msrTbodyRows}</tbody>
+                                    ${msrTfoot}
                                 </table>
                             </div>
                         </section>

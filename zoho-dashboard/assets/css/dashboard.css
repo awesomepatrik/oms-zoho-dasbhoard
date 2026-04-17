@@ -915,7 +915,12 @@ body.app-body {
 
 .msr-fields-table {
     width: 100%;
-    max-width: 560px;
+}
+
+/* First column (category) is wider; amount columns are right-aligned and compact */
+.msr-fields-table td:first-child,
+.msr-fields-table th:first-child {
+    min-width: 200px;
 }
 
 .msr-field-label {
