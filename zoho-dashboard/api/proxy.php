@@ -32,6 +32,7 @@ const ENDPOINTS = [
     'books_recurring'          => ['fn' => 'books_getRecurringInvoices', 'ttl' => 3600],
     'books_accounts'           => ['fn' => 'books_getAccounts',          'ttl' => 7200],
     'books_items'                => ['fn' => 'books_getItems',             'ttl' => 7200],
+    'books_item_detail'          => ['fn' => 'books_getItemDetail',        'ttl' => 7200, 'param' => 'item_id'],
     'books_item_invoice_status'  => ['fn' => 'books_getItemInvoiceStatus', 'ttl' => 300],
     'books_invoice_index'        => ['fn' => 'books_getInvoiceIndex',      'ttl' => 86400],
     'books_contacts'           => ['fn' => 'books_getContacts',          'ttl' => 3600],

@@ -164,10 +164,10 @@ $(function () {
         $detail.html('<div class="detail-loading"><span class="spinner"></span></div>');
 
         $.when(
-            $.getJSON(PROXY + '?endpoint=books_items'),
+            $.getJSON(PROXY + '?endpoint=books_item_detail&item_id=' + encodeURIComponent(itemId)),
             $.getJSON(PROXY + '?endpoint=books_invoices_by_item&item_id=' + encodeURIComponent(itemId)),
-        ).done(function (itemsRes, invoicesRes) {
-            const item     = (itemsRes[0].data || []).find(i => String(i.item_id) === String(itemId));
+        ).done(function (itemDetailRes, invoicesRes) {
+            const item     = itemDetailRes[0].data || null;
             const invoices = invoicesRes[0].data || [];
 
             if (!item) {

@@ -51,6 +51,18 @@ function books_getItems(string $token): array
 }
 
 /**
+ * Fetch a single item by ID — includes custom fields not returned by the list endpoint.
+ */
+function books_getItemDetail(string $token, string $itemId): array
+{
+    $cfg = get_config();
+    $url = rtrim($cfg['books_api_base'], '/') . '/items/' . rawurlencode($itemId)
+         . '?' . http_build_query(['organization_id' => $cfg['books_org_id']]);
+    $d = books_get($token, $url);
+    return $d['item'] ?? [];
+}
+
+/**
  * Return a map of item_id => true for every item whose invoice cache file
  * exists on disk and contains at least one invoice record.
  *
