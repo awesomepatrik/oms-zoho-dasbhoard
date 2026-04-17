@@ -366,14 +366,6 @@ $(function () {
                     `<td${i > 0 ? ' class="amount-cell"' : ''}>${escHtml(c)}</td>`
                 ).join('')}</tr>`).join('');
 
-        const msrTfootCells = msrHeaders.map((_, i) => {
-            if (i === 0) return '<td>Total</td>';
-            if (!msrIsCurrency(i)) return '<td class="amount-cell">\u2014</td>';
-            const sum = msrRows.reduce((s, row) => s + parseMsrAmt(row[i] || ''), 0);
-            return `<td class="amount-cell">${escHtml(sum > 0 ? formatCurrency(sum) : '\u2014')}</td>`;
-        }).join('');
-        const msrTfoot = msrRows.length > 1
-            ? `<tfoot><tr class="total-row">${msrTfootCells}</tr></tfoot>` : '';
 
         // ----- Reports tab -----
         const rpt = buildReportData(invoices);
@@ -438,7 +430,6 @@ $(function () {
                                 <table class="data-table msr-fields-table">
                                     <thead><tr>${msrTheadCells}</tr></thead>
                                     <tbody>${msrTbodyRows}</tbody>
-                                    ${msrTfoot}
                                 </table>
                             </div>
                         </section>
