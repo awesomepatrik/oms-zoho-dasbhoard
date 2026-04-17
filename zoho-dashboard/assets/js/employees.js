@@ -287,13 +287,25 @@ $(function () {
                 || lbl.includes('support req');
         });
 
-        // Parse the field value as a multi-line CSV.
-        // Row 0 is a header row: "Living Cost,Monthly,Yearly,Yearly Multiplier,Term"
-        // Data rows have quoted currency values: OMS Admin Levy,$600.00,"$7,200.00",1,"$7,200.00"
+        // Parse the MSR field value.
+        // Zoho stores it as HTML: <div><p>header row</p><p>data row</p>…</div>
+        // Each <p> contains one CSV row; currency values may be quoted: "$7,200.00"
         function parseMsrCsv(raw) {
             if (!raw || !raw.trim()) return { headers: [], rows: [] };
-            const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+
+            // Extract lines from <p> tags if the value is HTML, else split on newlines.
+            let lines;
+            if (raw.includes('<')) {
+                const tmp = document.createElement('div');
+                tmp.innerHTML = raw;
+                lines = Array.from(tmp.querySelectorAll('p'))
+                    .map(p => p.textContent.trim())
+                    .filter(Boolean);
+            } else {
+                lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+            }
             if (!lines.length) return { headers: [], rows: [] };
+
             function parseRow(line) {
                 const cells = [];
                 let inQ = false, cell = '';
@@ -306,7 +318,13 @@ $(function () {
                 cells.push(cell.trim());
                 return cells;
             }
-            return { headers: parseRow(lines[0]), rows: lines.slice(1).map(parseRow) };
+
+            const headers = parseRow(lines[0]);
+            // Skip rows where every cell is empty (blank separator lines like ",,,,")
+            const rows = lines.slice(1)
+                .map(parseRow)
+                .filter(cells => cells.some(c => c !== ''));
+            return { headers, rows };
         }
 
         const msrRaw = msrField ? String(msrField.value || '') : '';
