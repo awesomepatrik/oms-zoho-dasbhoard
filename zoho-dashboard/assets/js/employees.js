@@ -176,19 +176,11 @@ $(function () {
                 return;
             }
 
-            // Get Project Manager contact ID from item custom fields.
-            const pmCf = (item.custom_fields || []).find(cf =>
-                (cf.label || '').toLowerCase().includes('project manager')
-            );
-            const pmContactId = pmCf ? String(pmCf.value || '') : '';
-
-            // Fetch cfDefs + PM contact in parallel — both non-fatal.
+            // Fetch cfDefs + employee contact in parallel — both non-fatal.
             const cfDefsReq = $.getJSON(PROXY + '?endpoint=books_item_customfields')
                 .then(function (r) { return r; }, function () { return { data: [] }; });
-            const contactReq = pmContactId
-                ? $.getJSON(PROXY + '?endpoint=books_contact_detail&contact_id=' + encodeURIComponent(pmContactId) + refresh)
-                    .then(function (r) { return r; }, function () { return { data: {} }; })
-                : $.Deferred().resolve({ data: {} }).promise();
+            const contactReq = $.getJSON(PROXY + '?endpoint=books_employee_contact&item_id=' + encodeURIComponent(itemId) + refresh)
+                .then(function (r) { return r; }, function () { return { data: {} }; });
 
             $.when(cfDefsReq, contactReq).done(function (cfDefsRes, contactRes) {
                 const cfDefs  = Array.isArray(cfDefsRes && cfDefsRes.data) ? cfDefsRes.data : [];
@@ -273,7 +265,7 @@ $(function () {
 
         const hasContact = contact && contact.contact_id;
         const overviewRows = !hasContact
-            ? `<p class="detail-empty-msg">No Project Manager contact linked to this item in Zoho Books.</p>`
+            ? `<p class="detail-empty-msg">No matching contact found in Zoho Books for this item.</p>`
             : `<div class="ov-card">
                 <table class="ov-table">
                     <thead><tr><th colspan="2">Details</th></tr></thead>

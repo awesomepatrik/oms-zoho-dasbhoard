@@ -35,6 +35,7 @@ const ENDPOINTS = [
     'books_item_detail'          => ['fn' => 'books_getItemDetail',        'ttl' => 7200, 'param' => 'item_id'],
     'books_item_customfields'    => ['fn' => 'books_getItemCustomFields',  'ttl' => 86400],
     'books_contact_detail'       => ['fn' => 'books_getContactDetail',     'ttl' => 7200,  'param' => 'contact_id'],
+    'books_employee_contact'     => ['fn' => 'books_getEmployeeContact',   'ttl' => 7200,  'param' => 'item_id'],
     'books_item_invoice_status'  => ['fn' => 'books_getItemInvoiceStatus', 'ttl' => 300],
     'books_invoice_index'        => ['fn' => 'books_getInvoiceIndex',      'ttl' => 86400],
     'books_contacts'           => ['fn' => 'books_getContacts',          'ttl' => 3600],

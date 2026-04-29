@@ -75,6 +75,59 @@ function books_getContactDetail(string $token, string $contactId): array
 }
 
 /**
+ * Find the employee family contact for an item by searching Zoho Books
+ * contacts whose name matches the item's "Receipient Group Name" custom field
+ * (falls back to the item name). Returns the full contact detail.
+ */
+function books_getEmployeeContact(string $token, string $itemId): array
+{
+    $cfg     = get_config();
+    $baseUrl = rtrim($cfg['books_api_base'], '/');
+    $orgQs   = http_build_query(['organization_id' => $cfg['books_org_id']]);
+
+    // Get item from cache or API.
+    $itemCache = new ApiCache("books_item_detail_{$itemId}");
+    $item      = $itemCache->isValid(7200) ? $itemCache->read() : null;
+    if (!$item) {
+        $d    = books_get($token, "{$baseUrl}/items/" . rawurlencode($itemId) . "?{$orgQs}");
+        $item = $d['item'] ?? [];
+    }
+
+    // Prefer "Receipient Group Name" field — it stores the actual family name.
+    $searchName = '';
+    foreach ($item['custom_fields'] ?? [] as $cf) {
+        if (stripos($cf['label'] ?? '', 'receipient group name') !== false
+            || stripos($cf['label'] ?? '', 'recipient group name') !== false) {
+            $searchName = trim((string)($cf['value'] ?? ''));
+            break;
+        }
+    }
+    if ($searchName === '') $searchName = trim($item['name'] ?? '');
+    if ($searchName === '') return [];
+
+    // Search contacts by name.
+    $url      = "{$baseUrl}/contacts?{$orgQs}&" . http_build_query(['contact_name_contains' => $searchName]);
+    $results  = books_get($token, $url);
+    $contacts = $results['contacts'] ?? [];
+    if (empty($contacts)) return [];
+
+    // Pick closest match by Levenshtein distance.
+    $best      = null;
+    $bestScore = PHP_INT_MAX;
+    $needle    = strtolower($searchName);
+    foreach ($contacts as $c) {
+        $score = levenshtein($needle, strtolower($c['contact_name'] ?? ''));
+        if ($score < $bestScore) {
+            $bestScore = $score;
+            $best      = $c;
+        }
+    }
+    if (!$best) return [];
+
+    return books_getContactDetail($token, $best['contact_id']);
+}
+
+/**
  * Fetch custom field definitions for items from Zoho Books settings.
  * Returns the full array of custom field objects (each has customfield_id, label, etc.).
  * Useful for getting field IDs when an item has no value set for that field.
