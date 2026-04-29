@@ -634,6 +634,42 @@ body.app-body {
     word-break: break-word;
 }
 
+/* ── Overview profile card ─────────────────────────────────────────────── */
+.ov-card { display: flex; flex-direction: column; gap: 1rem; }
+
+.ov-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--colour-card);
+    border: 1px solid var(--colour-border);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+.ov-table thead th {
+    background: #1a3a5c;
+    color: #fff;
+    text-align: left;
+    padding: 0.4rem 0.8rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+.ov-table tbody tr { border-bottom: 1px solid var(--colour-border); }
+.ov-table tbody tr:last-child { border-bottom: none; }
+.ov-table td.ov-lbl {
+    width: 35%;
+    background: #ddeaf7;
+    color: #1a3a5c;
+    font-weight: 600;
+    font-size: 0.82rem;
+    padding: 0.35rem 0.75rem;
+    white-space: nowrap;
+}
+.ov-table td.ov-val {
+    padding: 0.35rem 0.75rem;
+    font-size: 0.85rem;
+    color: var(--colour-text);
+}
+
 .detail-table-wrap {
     background: var(--colour-card);
     border: 1px solid var(--colour-border);

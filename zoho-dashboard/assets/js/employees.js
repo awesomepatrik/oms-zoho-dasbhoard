@@ -176,12 +176,25 @@ $(function () {
                 return;
             }
 
-            // Fetch custom field definitions separately — failure is non-fatal.
-            $.getJSON(PROXY + '?endpoint=books_item_customfields')
-                .always(function (cfDefsRes) {
-                    const cfDefs = Array.isArray(cfDefsRes && cfDefsRes.data) ? cfDefsRes.data : [];
-                    renderDetail($detail, item, invoices, cfDefs);
-                });
+            // Get Project Manager contact ID from item custom fields.
+            const pmCf = (item.custom_fields || []).find(cf =>
+                (cf.label || '').toLowerCase().includes('project manager')
+            );
+            const pmContactId = pmCf ? String(pmCf.value || '') : '';
+
+            // Fetch cfDefs + PM contact in parallel — both non-fatal.
+            const cfDefsReq = $.getJSON(PROXY + '?endpoint=books_item_customfields')
+                .then(function (r) { return r; }, function () { return { data: [] }; });
+            const contactReq = pmContactId
+                ? $.getJSON(PROXY + '?endpoint=books_contact_detail&contact_id=' + encodeURIComponent(pmContactId) + refresh)
+                    .then(function (r) { return r; }, function () { return { data: {} }; })
+                : $.Deferred().resolve({ data: {} }).promise();
+
+            $.when(cfDefsReq, contactReq).done(function (cfDefsRes, contactRes) {
+                const cfDefs  = Array.isArray(cfDefsRes && cfDefsRes.data) ? cfDefsRes.data : [];
+                const contact = (contactRes && contactRes.data) || {};
+                renderDetail($detail, item, invoices, cfDefs, contact);
+            });
 
         }).fail(function (jqXHR) {
             if (jqXHR.status === 401) {
@@ -196,7 +209,7 @@ $(function () {
     // Detail panel rendering
     // -------------------------------------------------------------------------
 
-    function renderDetail($detail, item, invoices, cfDefs) {
+    function renderDetail($detail, item, invoices, cfDefs, contact) {
         const statusCls  = (item.status || '').toLowerCase() === 'active' ? 'badge-active' : 'badge-stopped';
         const statusText = capitalise(item.status || 'unknown');
 
@@ -205,25 +218,72 @@ $(function () {
             .split(/\s+/).slice(0, 2)
             .map(w => w[0].toUpperCase()).join('');
 
-        // Overview fields: core + custom
-        const coreFields = [
-            ['Item Type',     capitalise((item.item_type || '').replace(/_/g, ' '))],
-            ['Selling Price', formatCurrency(parseFloat(item.rate || 0))],
-            item.account_name ? ['Account',     item.account_name]  : null,
-            item.sku          ? ['SKU / Code',  item.sku]           : null,
-            item.description  ? ['Description', item.description]   : null,
-        ].filter(Boolean);
+        // ── Overview — profile from Project Manager contact ──────────────────
+        const cCfs    = (contact && contact.custom_fields)   || [];
+        const persons = (contact && contact.contact_persons) || [];
 
-        const customFields = (item.custom_fields || [])
-            .filter(cf => cf.value !== '' && cf.value !== null && cf.value !== undefined)
-            .filter(cf => !(cf.label || '').toLowerCase().includes('msr'))
-            .map(cf => [cf.label, String(cf.value)]);
+        // Get a custom field value by exact label (case-insensitive).
+        function cfGet(label) {
+            const cf = cCfs.find(f => (f.label || '').toLowerCase() === label.toLowerCase());
+            return cf ? String(cf.value || '') : '';
+        }
 
-        const overviewRows = [...coreFields, ...customFields].map(([label, value]) => `
-            <div class="overview-row">
-                <span class="overview-label">${escHtml(label)}</span>
-                <span class="overview-value">${escHtml(value || '\u2014')}</span>
-            </div>`).join('');
+        // Strip HTML and split by newline into individual lines.
+        function toLines(raw) {
+            if (!raw) return [];
+            let text = raw;
+            if (raw.includes('<')) {
+                const tmp = document.createElement('div');
+                tmp.innerHTML = raw;
+                text = tmp.textContent || '';
+            }
+            return text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+        }
+
+        // Build a set of <tr> rows for a multi-line value under one label.
+        function multiRow(label, lines) {
+            if (!lines.length) return '';
+            return lines.map((v, i) =>
+                `<tr><td class="ov-lbl">${escHtml(i === 0 ? label : '')}</td><td class="ov-val">${escHtml(v)}</td></tr>`
+            ).join('');
+        }
+
+        function singleRow(label, value) {
+            if (!value) return '';
+            return `<tr><td class="ov-lbl">${escHtml(label)}</td><td class="ov-val">${escHtml(value)}</td></tr>`;
+        }
+
+        const nameLines  = toLines(cfGet('Name(s)'));
+        const childLines = toLines(cfGet('Children(s)'));
+        const emailLines = persons.map(p => p.email).filter(Boolean);
+
+        const detailsBody = [
+            multiRow('Name',       nameLines),
+            multiRow('Child',      childLines),
+            singleRow('Category',  cfGet('Category')),
+            singleRow('Connection', cfGet('Connection')),
+            multiRow('Email',      emailLines),
+        ].join('');
+
+        const emergencyBody = [
+            singleRow('Name',  cfGet('Emergency Contact Name')),
+            singleRow('Phone', cfGet('Emergency Contact Phone')),
+            singleRow('Email', cfGet('Emergency Contact Email')),
+        ].join('');
+
+        const hasContact = contact && contact.contact_id;
+        const overviewRows = !hasContact
+            ? `<p class="detail-empty-msg">No Project Manager contact linked to this item in Zoho Books.</p>`
+            : `<div class="ov-card">
+                <table class="ov-table">
+                    <thead><tr><th colspan="2">Details</th></tr></thead>
+                    <tbody>${detailsBody || '<tr><td colspan="2" class="detail-empty-msg">No details found.</td></tr>'}</tbody>
+                </table>
+                ${emergencyBody ? `<table class="ov-table">
+                    <thead><tr><th colspan="2">Emergency Contact</th></tr></thead>
+                    <tbody>${emergencyBody}</tbody>
+                </table>` : ''}
+            </div>`;
 
         // Transactions
         const sortedInvoices = [...invoices]

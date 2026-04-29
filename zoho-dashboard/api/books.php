@@ -63,6 +63,18 @@ function books_getItemDetail(string $token, string $itemId): array
 }
 
 /**
+ * Fetch a single contact by ID — includes contact_persons and custom_fields.
+ */
+function books_getContactDetail(string $token, string $contactId): array
+{
+    $cfg = get_config();
+    $url = rtrim($cfg['books_api_base'], '/') . '/contacts/' . rawurlencode($contactId)
+         . '?' . http_build_query(['organization_id' => $cfg['books_org_id']]);
+    $d = books_get($token, $url);
+    return $d['contact'] ?? [];
+}
+
+/**
  * Fetch custom field definitions for items from Zoho Books settings.
  * Returns the full array of custom field objects (each has customfield_id, label, etc.).
  * Useful for getting field IDs when an item has no value set for that field.
