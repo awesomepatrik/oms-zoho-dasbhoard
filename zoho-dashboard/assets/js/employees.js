@@ -258,12 +258,14 @@ $(function () {
         }
 
         // Strip HTML tags and split by newline.
+        // <br> tags are converted to \n before stripping so they act as separators.
         function toLines(raw) {
             if (!raw) return [];
             let text = raw;
             if (raw.includes('<')) {
+                text = raw.replace(/<br\s*\/?>/gi, '\n');
                 const tmp = document.createElement('div');
-                tmp.innerHTML = raw;
+                tmp.innerHTML = text;
                 text = tmp.textContent || '';
             }
             return text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
@@ -292,6 +294,7 @@ $(function () {
             multiRow('Name',        nameLines),
             multiRow('Child',       childLines),
             singleRow('Category',   cfGet('Category')),
+            singleRow('Field',      cfGet('Field')),
             singleRow('Connection', cfGet('Connection')),
             multiRow('Email',       emailLines),
         ].join('');
@@ -302,18 +305,37 @@ $(function () {
             singleRow('Email', cfGet('Emergency Contact Email')),
         ].join('');
 
-        const hasContact = contact && contact.contact_id;
+        const hasContact  = contact && contact.contact_id;
+        const photoUrl    = (contact && contact.photo_url) || '';
+        const contactName = (contact && contact.contact_name) || '';
+
         const overviewRows = !hasContact
             ? `<p class="detail-empty-msg">No Project Manager assigned to this item.</p>`
             : `<div class="ov-card">
-                <table class="ov-table">
-                    <thead><tr><th colspan="2">Information</th></tr></thead>
-                    <tbody>${infoBody || '<tr><td colspan="2" class="detail-empty-msg">No information found.</td></tr>'}</tbody>
-                </table>
-                ${emergencyBody ? `<table class="ov-table">
-                    <thead><tr><th colspan="2">Emergency Contact</th></tr></thead>
-                    <tbody>${emergencyBody}</tbody>
-                </table>` : ''}
+                <div class="ov-layout">
+                    <div class="ov-left">
+                        ${photoUrl
+                            ? `<img class="ov-photo" src="${escAttr(photoUrl)}" alt="" onerror="this.style.display='none'">`
+                            : `<div class="ov-photo-fallback">${escHtml((contactName || '?')[0].toUpperCase())}</div>`
+                        }
+                        <div class="ov-profile-name">${escHtml(contactName)}</div>
+                        <span class="ov-profile-badge">Project Manager</span>
+                    </div>
+                    <div class="ov-right">
+                        <div class="ov-section">
+                            <div class="ov-section-title">Information</div>
+                            <table class="ov-table">
+                                <tbody>${infoBody || '<tr><td colspan="2" class="detail-empty-msg">No information found.</td></tr>'}</tbody>
+                            </table>
+                        </div>
+                        ${emergencyBody ? `<div class="ov-section">
+                            <div class="ov-section-title">Emergency Contact</div>
+                            <table class="ov-table">
+                                <tbody>${emergencyBody}</tbody>
+                            </table>
+                        </div>` : ''}
+                    </div>
+                </div>
             </div>`;
 
         // Transactions
@@ -532,7 +554,7 @@ $(function () {
                 </div>
 
                 <div class="tab-pane" id="tab-overview">
-                    <div class="overview-grid">${overviewRows}</div>
+                    <div class="ov-wrap">${overviewRows}</div>
                 </div>
 
                 <div class="tab-pane is-hidden" id="tab-transactions">

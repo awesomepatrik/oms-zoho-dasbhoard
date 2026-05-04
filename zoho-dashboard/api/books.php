@@ -584,7 +584,8 @@ function books_normalise_name(string $name): string
 {
     $name = mb_strtolower(trim($name));
     // Collapse all whitespace variants to a single space.
-    $name = preg_replace('/[\s\x{00A0}\x{200B}]+/u', ' ', $name);
+    $name = preg_replace('/[\s\
+    x{00A0}\x{200B}]+/u', ' ', $name);
     // Normalise "and" (whole word, surrounded by spaces) to "&".
     $name = preg_replace('/\band\b/', '&', $name);
     // Collapse any spaces that now surround "&"  →  " & ".
