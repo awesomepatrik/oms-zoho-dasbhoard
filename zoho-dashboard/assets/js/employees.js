@@ -17,8 +17,10 @@ $(function () {
     const PROXY = '/oms-zoho-dashboard/zoho-dashboard/api/proxy.php';
 
     let allEmployees = [];
+    let pmMap        = {};   // item_id => { pm_id, pm_name }
     let selectedId   = null;
     let searchQuery  = '';
+    let pmFilter     = '';
     const _charts    = {};   // active Chart.js instances keyed by canvas id
 
     // -------------------------------------------------------------------------
@@ -37,6 +39,11 @@ $(function () {
         renderSidebar();
     });
 
+    $('#pm-filter').on('change', function () {
+        pmFilter = $(this).val();
+        renderSidebar();
+    });
+
     // -------------------------------------------------------------------------
     // Data loading
     // -------------------------------------------------------------------------
@@ -45,9 +52,12 @@ $(function () {
         const suffix = forceRefresh ? '&refresh=1' : '';
 
         allEmployees = [];
+        pmMap        = {};
         selectedId   = null;
         searchQuery  = '';
+        pmFilter     = '';
         $('#emp-search').val('');
+        $('#pm-filter').val('');
         $('#emp-list').html('<p class="sidebar-status">Loading\u2026</p>');
         if (forceRefresh) {
             $('#app-detail').html('<div class="detail-empty"><p>Loading\u2026</p></div>');
@@ -69,8 +79,24 @@ $(function () {
                 const statusMap = statusRes[0].data || {};
 
                 allEmployees = items
-                    .filter(item => statusMap[String(item.item_id)])
                     .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+                // Fetch PM map (item_id => {pm_id, pm_name}) from cached item details.
+                $.getJSON(PROXY + '?endpoint=books_items_pm_map' + suffix).done(function (res) {
+                    pmMap = res.data || {};
+                    const pmSeen = {};
+                    const pmOptions = [];
+                    Object.values(pmMap).forEach(function (pm) {
+                        if (pm.pm_id && pm.pm_name && !pmSeen[pm.pm_id]) {
+                            pmSeen[pm.pm_id] = true;
+                            pmOptions.push(`<option value="${escAttr(pm.pm_id)}">${escHtml(pm.pm_name)}</option>`);
+                        }
+                    });
+                    pmOptions.sort();
+                    $('#pm-filter')
+                        .find('option:not(:first)').remove().end()
+                        .append(pmOptions.join(''));
+                });
 
                 renderSidebar();
 
@@ -98,9 +124,14 @@ $(function () {
     function renderSidebar() {
         const $list = $('#emp-list');
 
-        const filtered = searchQuery
-            ? allEmployees.filter(e => (e.name || '').toLowerCase().includes(searchQuery))
-            : allEmployees;
+        const filtered = allEmployees.filter(emp => {
+            if (searchQuery && !(emp.name || '').toLowerCase().includes(searchQuery)) return false;
+            if (pmFilter) {
+                const pm = pmMap[String(emp.item_id)] || {};
+                if ((pm.pm_id || '') !== pmFilter) return false;
+            }
+            return true;
+        });
 
         const $warm = $list.find('.sidebar-warmup').detach();
 
@@ -176,11 +207,17 @@ $(function () {
                 return;
             }
 
-            // Fetch cfDefs + employee contact in parallel — both non-fatal.
+            // Fetch cfDefs + PM contact in parallel — both non-fatal.
+            // PM contact ID comes from the "Project Manager" lookup custom field on the item.
+            const pmCf  = (item.custom_fields || []).find(f => (f.label || '').toLowerCase() === 'project manager');
+            const pmId  = pmCf ? String(pmCf.value || '').trim() : '';
+
             const cfDefsReq = $.getJSON(PROXY + '?endpoint=books_item_customfields')
                 .then(function (r) { return r; }, function () { return { data: [] }; });
-            const contactReq = $.getJSON(PROXY + '?endpoint=books_employee_contact&item_id=' + encodeURIComponent(itemId) + refresh)
-                .then(function (r) { return r; }, function () { return { data: {} }; });
+            const contactReq = pmId
+                ? $.getJSON(PROXY + '?endpoint=books_contact_detail&contact_id=' + encodeURIComponent(pmId) + refresh)
+                    .then(function (r) { return r; }, function () { return { data: {} }; })
+                : $.when({ data: {} });
 
             $.when(cfDefsReq, contactReq).done(function (cfDefsRes, contactRes) {
                 const cfDefs  = Array.isArray(cfDefsRes && cfDefsRes.data) ? cfDefsRes.data : [];
@@ -210,17 +247,17 @@ $(function () {
             .split(/\s+/).slice(0, 2)
             .map(w => w[0].toUpperCase()).join('');
 
-        // ── Overview — profile from Project Manager contact ──────────────────
+        // ── Overview — family/missionary contact profile ─────────────────────
         const cCfs    = (contact && contact.custom_fields)   || [];
         const persons = (contact && contact.contact_persons) || [];
 
-        // Get a custom field value by exact label (case-insensitive).
+        // Get a custom field value by label (case-insensitive).
         function cfGet(label) {
             const cf = cCfs.find(f => (f.label || '').toLowerCase() === label.toLowerCase());
             return cf ? String(cf.value || '') : '';
         }
 
-        // Strip HTML and split by newline into individual lines.
+        // Strip HTML tags and split by newline.
         function toLines(raw) {
             if (!raw) return [];
             let text = raw;
@@ -232,7 +269,6 @@ $(function () {
             return text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
         }
 
-        // Build a set of <tr> rows for a multi-line value under one label.
         function multiRow(label, lines) {
             if (!lines.length) return '';
             return lines.map((v, i) =>
@@ -247,14 +283,17 @@ $(function () {
 
         const nameLines  = toLines(cfGet('Name(s)'));
         const childLines = toLines(cfGet('Children(s)'));
-        const emailLines = persons.map(p => p.email).filter(Boolean);
+        // Emails: merge Contact Persons emails + Email(s) custom field lines, deduplicated.
+        const personEmails = persons.map(p => p.email).filter(Boolean);
+        const cfEmails     = toLines(cfGet('Email(s)'));
+        const emailLines   = [...new Set([...personEmails, ...cfEmails])];
 
-        const detailsBody = [
-            multiRow('Name',       nameLines),
-            multiRow('Child',      childLines),
-            singleRow('Category',  cfGet('Category')),
+        const infoBody = [
+            multiRow('Name',        nameLines),
+            multiRow('Child',       childLines),
+            singleRow('Category',   cfGet('Category')),
             singleRow('Connection', cfGet('Connection')),
-            multiRow('Email',      emailLines),
+            multiRow('Email',       emailLines),
         ].join('');
 
         const emergencyBody = [
@@ -265,11 +304,11 @@ $(function () {
 
         const hasContact = contact && contact.contact_id;
         const overviewRows = !hasContact
-            ? `<p class="detail-empty-msg">No matching contact found in Zoho Books for this item.</p>`
+            ? `<p class="detail-empty-msg">No Project Manager assigned to this item.</p>`
             : `<div class="ov-card">
                 <table class="ov-table">
-                    <thead><tr><th colspan="2">Details</th></tr></thead>
-                    <tbody>${detailsBody || '<tr><td colspan="2" class="detail-empty-msg">No details found.</td></tr>'}</tbody>
+                    <thead><tr><th colspan="2">Information</th></tr></thead>
+                    <tbody>${infoBody || '<tr><td colspan="2" class="detail-empty-msg">No information found.</td></tr>'}</tbody>
                 </table>
                 ${emergencyBody ? `<table class="ov-table">
                     <thead><tr><th colspan="2">Emergency Contact</th></tr></thead>

@@ -38,6 +38,7 @@ const ENDPOINTS = [
     'books_employee_contact'     => ['fn' => 'books_getEmployeeContact',   'ttl' => 7200,  'param' => 'item_id'],
     'books_item_invoice_status'  => ['fn' => 'books_getItemInvoiceStatus', 'ttl' => 300],
     'books_invoice_index'        => ['fn' => 'books_getInvoiceIndex',      'ttl' => 86400],
+    'books_items_pm_map'         => ['fn' => 'books_getItemsPmMap',        'ttl' => 3600],
     'books_contacts'           => ['fn' => 'books_getContacts',          'ttl' => 3600],
     'books_invoices_by_item'   => ['fn' => 'books_getInvoicesByItem',    'ttl' => 3600, 'param' => 'item_id'],
     'crm_contacts'             => ['fn' => 'crm_getContacts',            'ttl' => 3600],

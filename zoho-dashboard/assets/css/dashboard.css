@@ -374,6 +374,23 @@ body.app-body {
     border-color: var(--colour-secondary);
 }
 
+.sidebar-pm-filter {
+    width: 100%;
+    margin-top: 0.4rem;
+    padding: 0.38rem 0.55rem;
+    border: 1px solid var(--colour-border);
+    border-radius: var(--radius);
+    font-size: 0.85rem;
+    background: var(--colour-bg);
+    color: var(--colour-text);
+    outline: none;
+    cursor: pointer;
+    transition: border-color 0.15s;
+}
+.sidebar-pm-filter:focus {
+    border-color: var(--colour-secondary);
+}
+
 #emp-list {
     flex: 1;
     overflow-y: auto;

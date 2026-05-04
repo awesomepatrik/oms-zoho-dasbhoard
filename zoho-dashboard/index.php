@@ -39,6 +39,9 @@ require_auth();
                        class="sidebar-search"
                        placeholder="Search…"
                        autocomplete="off">
+                <select id="pm-filter" class="sidebar-pm-filter">
+                    <option value="">All Project Managers</option>
+                </select>
             </div>
             <div id="emp-list">
                 <p class="sidebar-status">Loading…</p>

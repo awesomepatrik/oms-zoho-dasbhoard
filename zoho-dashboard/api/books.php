@@ -93,20 +93,33 @@ function books_getEmployeeContact(string $token, string $itemId): array
         $item = $d['item'] ?? [];
     }
 
-    // Prefer "Receipient Group Name" field — it stores the actual family name.
+    // 1. Use the "Project Manager" tag — it holds the missionary/family name.
     $searchName = '';
-    foreach ($item['custom_fields'] ?? [] as $cf) {
-        if (stripos($cf['label'] ?? '', 'receipient group name') !== false
-            || stripos($cf['label'] ?? '', 'recipient group name') !== false) {
-            $searchName = trim((string)($cf['value'] ?? ''));
+    foreach ($item['tags'] ?? [] as $tag) {
+        if (stripos($tag['tag_name'] ?? '', 'project manager') !== false) {
+            $searchName = trim($tag['tag_option_name'] ?? '');
             break;
         }
     }
+    // 2. Fall back to "Receipient Group Name" custom field.
+    if ($searchName === '') {
+        foreach ($item['custom_fields'] ?? [] as $cf) {
+            if (stripos($cf['label'] ?? '', 'receipient group name') !== false
+                || stripos($cf['label'] ?? '', 'recipient group name') !== false) {
+                $searchName = trim((string)($cf['value'] ?? ''));
+                break;
+            }
+        }
+    }
+    // 3. Fall back to item name.
     if ($searchName === '') $searchName = trim($item['name'] ?? '');
     if ($searchName === '') return [];
 
-    // Search contacts by name.
-    $url      = "{$baseUrl}/contacts?{$orgQs}&" . http_build_query(['contact_name_contains' => $searchName]);
+    // Use only the first word for the API search (Zoho requires exact substring
+    // match, so "Kumar Ben & Christie" won't match "Kumar, Ben & Christie").
+    // Levenshtein below picks the best contact from the broader result set.
+    $firstWord = preg_split('/[\s,]+/', $searchName)[0] ?? $searchName;
+    $url      = "{$baseUrl}/contacts?{$orgQs}&" . http_build_query(['contact_name_contains' => $firstWord]);
     $results  = books_get($token, $url);
     $contacts = $results['contacts'] ?? [];
     if (empty($contacts)) return [];
@@ -125,6 +138,38 @@ function books_getEmployeeContact(string $token, string $itemId): array
     if (!$best) return [];
 
     return books_getContactDetail($token, $best['contact_id']);
+}
+
+/**
+ * Return a map of item_id => ['pm_id' => ..., 'pm_name' => ...] by scanning
+ * cached item detail files. No extra API calls — uses what is already cached.
+ */
+function books_getItemsPmMap(string $_token): array
+{
+    $cfg      = get_config();
+    $cacheDir = rtrim($cfg['cache_dir'], '/\\');
+    $map      = [];
+
+    foreach (glob("{$cacheDir}/books_item_detail_*.json") as $file) {
+        $raw = @file_get_contents($file);
+        if (!$raw) continue;
+        $payload = json_decode($raw, true);
+        $item    = $payload['data'] ?? null;
+        if (!$item || empty($item['item_id'])) continue;
+
+        foreach ($item['custom_fields'] ?? [] as $cf) {
+            if (stripos($cf['label'] ?? '', 'project manager') !== false) {
+                $pmId   = trim((string)($cf['value'] ?? ''));
+                $pmName = trim((string)($cf['value_formatted'] ?? $pmId));
+                if ($pmId !== '') {
+                    $map[$item['item_id']] = ['pm_id' => $pmId, 'pm_name' => $pmName];
+                }
+                break;
+            }
+        }
+    }
+
+    return $map;
 }
 
 /**
