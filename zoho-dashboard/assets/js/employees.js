@@ -31,7 +31,7 @@ $(function () {
 
     $('#btn-refresh').on('click', function () {
         $(this).prop('disabled', true);
-        loadEmployees(true).always(() => $(this).prop('disabled', false));
+        loadEmployees().always(() => $(this).prop('disabled', false));
     });
 
     $('#emp-search').on('input', function () {
@@ -48,9 +48,7 @@ $(function () {
     // Data loading
     // -------------------------------------------------------------------------
 
-    function loadEmployees(forceRefresh) {
-        const suffix = forceRefresh ? '&refresh=1' : '';
-
+    function loadEmployees() {
         allEmployees = [];
         pmMap        = {};
         selectedId   = null;
@@ -59,47 +57,16 @@ $(function () {
         $('#emp-search').val('');
         $('#pm-filter').val('');
         $('#emp-list').html('<p class="sidebar-status">Loading\u2026</p>');
-        if (forceRefresh) {
-            $('#app-detail').html('<div class="detail-empty"><p>Loading\u2026</p></div>');
-        }
 
-        // Step 1: ensure the invoice index is built (may be slow on first run).
-        $('#emp-list').html('<p class="sidebar-status">Building invoice index\u2026</p>');
-
-        return $.getJSON(PROXY + '?endpoint=books_invoice_index' + suffix)
-            .then(function () {
-                // Step 2: load items + status map (both instant once index is built).
-                return $.when(
-                    $.getJSON(PROXY + '?endpoint=books_items' + suffix),
-                    $.getJSON(PROXY + '?endpoint=books_item_invoice_status'),
-                );
-            })
-            .done(function (itemsRes, statusRes) {
-                const items     = itemsRes[0].data  || [];
-                const statusMap = statusRes[0].data || {};
-
-                allEmployees = items
+        // Load only the items list — renders the sidebar immediately.
+        return $.getJSON(PROXY + '?endpoint=books_items')
+            .done(function (itemsRes) {
+                allEmployees = (itemsRes.data || [])
                     .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-
-                // Fetch PM map (item_id => {pm_id, pm_name}) from cached item details.
-                $.getJSON(PROXY + '?endpoint=books_items_pm_map' + suffix).done(function (res) {
-                    pmMap = res.data || {};
-                    const pmSeen = {};
-                    const pmOptions = [];
-                    Object.values(pmMap).forEach(function (pm) {
-                        if (pm.pm_id && pm.pm_name && !pmSeen[pm.pm_id]) {
-                            pmSeen[pm.pm_id] = true;
-                            pmOptions.push(`<option value="${escAttr(pm.pm_id)}">${escHtml(pm.pm_name)}</option>`);
-                        }
-                    });
-                    pmOptions.sort();
-                    $('#pm-filter')
-                        .find('option:not(:first)').remove().end()
-                        .append(pmOptions.join(''));
-                });
 
                 renderSidebar();
 
+                // Auto-select from URL hash, or first employee.
                 const hashId = location.hash.replace('#emp-', '');
                 const autoId = hashId && allEmployees.find(e => String(e.item_id) === hashId)
                     ? hashId
@@ -549,12 +516,71 @@ $(function () {
                             <span class="tab-count">${sortedInvoices.length}</span>
                         </button>
                         <button class="tab-btn" data-tab="msr">MSR</button>
-                        <button class="tab-btn" data-tab="reports">Reports</button>
+                        <button class="tab-btn" data-tab="support">Support</button>
                     </nav>
                 </div>
 
                 <div class="tab-pane" id="tab-overview">
                     <div class="ov-wrap">${overviewRows}</div>
+                    <div class="reports-layout">
+
+                        <section class="report-section">
+                            <h3 class="report-title">Income Trend \u2014 ${currentYear}</h3>
+                            <div class="detail-table-wrap">
+                                <table class="data-table">
+                                    <thead><tr>
+                                        <th>Month</th>
+                                        <th class="amount-cell">Income</th>
+                                        <th class="amount-cell">Cumulative</th>
+                                    </tr></thead>
+                                    <tbody>${incomeTblRows}</tbody>
+                                    <tfoot><tr class="total-row">
+                                        <td>Total</td>
+                                        <td class="amount-cell">${escHtml(formatCurrency(rpt.yearTotal))}</td>
+                                        <td class="amount-cell">${escHtml(formatCurrency(rpt.yearTotal))}</td>
+                                    </tr></tfoot>
+                                </table>
+                            </div>
+                        </section>
+
+                        <div class="report-charts-row">
+                            <section class="report-section">
+                                <h3 class="report-title">Balance Trend</h3>
+                                <p class="report-subtitle">
+                                    Yearly Support Target: ${escHtml(formatCurrency(rpt.totalYearlySupport))}
+                                </p>
+                                <div class="report-chart-wrap">
+                                    <canvas id="rpt-balance"></canvas>
+                                </div>
+                            </section>
+                            <section class="report-section">
+                                <h3 class="report-title">Income by Month</h3>
+                                <div class="report-chart-wrap">
+                                    <canvas id="rpt-income"></canvas>
+                                </div>
+                            </section>
+                        </div>
+
+                        <section class="report-section">
+                            <h3 class="report-title">Funding Status</h3>
+                            <div class="report-pie-row">
+                                <div class="report-pie-wrap">
+                                    <canvas id="rpt-funding"></canvas>
+                                </div>
+                                <dl class="report-pie-stats">
+                                    <dt>Yearly Support Target</dt>
+                                    <dd>${escHtml(formatCurrency(rpt.totalYearlySupport))}</dd>
+                                    <dt>Avg Annual Income</dt>
+                                    <dd>${escHtml(formatCurrency(rpt.avgAnnualIncome))}</dd>
+                                    <dt>Funded</dt>
+                                    <dd class="report-stat-funded">${rpt.percentFunded.toFixed(1)}%</dd>
+                                    <dt>Outstanding</dt>
+                                    <dd class="report-stat-outstanding">${rpt.percentOutstanding.toFixed(1)}%</dd>
+                                </dl>
+                            </div>
+                        </section>
+
+                    </div>
                 </div>
 
                 <div class="tab-pane is-hidden" id="tab-transactions">
@@ -621,67 +647,7 @@ $(function () {
                     </div>
                 </div>
 
-                <div class="tab-pane is-hidden" id="tab-reports">
-                    <div class="reports-layout">
-
-                        <section class="report-section">
-                            <h3 class="report-title">Income Trend \u2014 ${currentYear}</h3>
-                            <div class="detail-table-wrap">
-                                <table class="data-table">
-                                    <thead><tr>
-                                        <th>Month</th>
-                                        <th class="amount-cell">Income</th>
-                                        <th class="amount-cell">Cumulative</th>
-                                    </tr></thead>
-                                    <tbody>${incomeTblRows}</tbody>
-                                    <tfoot><tr class="total-row">
-                                        <td>Total</td>
-                                        <td class="amount-cell">${escHtml(formatCurrency(rpt.yearTotal))}</td>
-                                        <td class="amount-cell">${escHtml(formatCurrency(rpt.yearTotal))}</td>
-                                    </tr></tfoot>
-                                </table>
-                            </div>
-                        </section>
-
-                        <div class="report-charts-row">
-                            <section class="report-section">
-                                <h3 class="report-title">Balance Trend</h3>
-                                <p class="report-subtitle">
-                                    Yearly Support Target: ${escHtml(formatCurrency(rpt.totalYearlySupport))}
-                                </p>
-                                <div class="report-chart-wrap">
-                                    <canvas id="rpt-balance"></canvas>
-                                </div>
-                            </section>
-                            <section class="report-section">
-                                <h3 class="report-title">Income by Month</h3>
-                                <div class="report-chart-wrap">
-                                    <canvas id="rpt-income"></canvas>
-                                </div>
-                            </section>
-                        </div>
-
-                        <section class="report-section">
-                            <h3 class="report-title">Funding Status</h3>
-                            <div class="report-pie-row">
-                                <div class="report-pie-wrap">
-                                    <canvas id="rpt-funding"></canvas>
-                                </div>
-                                <dl class="report-pie-stats">
-                                    <dt>Yearly Support Target</dt>
-                                    <dd>${escHtml(formatCurrency(rpt.totalYearlySupport))}</dd>
-                                    <dt>Avg Annual Income</dt>
-                                    <dd>${escHtml(formatCurrency(rpt.avgAnnualIncome))}</dd>
-                                    <dt>Funded</dt>
-                                    <dd class="report-stat-funded">${rpt.percentFunded.toFixed(1)}%</dd>
-                                    <dt>Outstanding</dt>
-                                    <dd class="report-stat-outstanding">${rpt.percentOutstanding.toFixed(1)}%</dd>
-                                </dl>
-                            </div>
-                        </section>
-
-                    </div>
-                </div>
+                <div class="tab-pane is-hidden" id="tab-support"></div>
             </div>
         `);
 
@@ -909,8 +875,11 @@ $(function () {
             }
         });
 
-        // Tab switching — initialise charts lazily on first Reports click.
-        let reportsReady = false;
+        // Initialise charts immediately — canvases are now in the Overview tab.
+        initReportCharts(rpt);
+
+        // Tab switching — load support data lazily on first click.
+        let supportReady = false;
         $detail.find('.tab-btn').on('click', function () {
             const tab = $(this).data('tab');
             $detail.find('.tab-btn').removeClass('is-active');
@@ -918,11 +887,191 @@ $(function () {
             $detail.find('.tab-pane').addClass('is-hidden');
             $('#tab-' + tab).removeClass('is-hidden');
 
-            if (tab === 'reports' && !reportsReady) {
-                reportsReady = true;
-                initReportCharts(rpt);
+            if (tab === 'support' && !supportReady) {
+                supportReady = true;
+                renderSupportTab($('#tab-support'), item);
             }
         });
+    }
+
+    // -------------------------------------------------------------------------
+    // Support tab — recurring pledges for this employee
+    // -------------------------------------------------------------------------
+
+    /**
+     * Extract significant tokens from a name string for fuzzy matching.
+     * Strips stop-words, punctuation, and common recurring-invoice filler words,
+     * then returns an array of lowercase words >= 3 chars.
+     *
+     * e.g. "Donovan to Kumar"        → ["donovan", "kumar"]
+     *      "Kumar Ben & Christie"    → ["kumar", "ben", "christie"]
+     *      "Smith - Monthly Support" → ["smith"]
+     */
+    function supportTokens(str) {
+        const stop = new Set([
+            'to', 'and', 'or', 'the', 'of', 'for', 'in', 'a', 'an',
+            'mr', 'mrs', 'ms', 'dr', 'rev',
+            'monthly', 'support', 'pledge', 'donation', 'contribution',
+            'fund', 'appeal', 'giving', 'from', 'by', 'with', 'at',
+            'requirement', 'req',
+        ]);
+        return (str || '')
+            .toLowerCase()
+            .replace(/[^a-z\s]/g, ' ')
+            .split(/\s+/)
+            .filter(w => w.length >= 3 && !stop.has(w));
+    }
+
+    /**
+     * Returns true when empName and riName share at least one significant token
+     * (length >= 3, not a stop-word).  Handles cases like:
+     *   "Kumar Ben & Christie"  ↔  "Donovan to Kumar"   → shared: "kumar"
+     *   "Smith John"            ↔  "John & Mary Smith"  → shared: "smith"
+     */
+    /**
+     * Returns true when empName and riName share at least one significant token.
+     *
+     * Two passes:
+     *  1. Exact token match — "Kumar" in both names.
+     *  2. Substring match   — employee token found inside a concatenated recurrence
+     *                         word, e.g. "kumar" inside "CookforKumar" (≥4 chars only
+     *                         to avoid false positives on short words like "ben").
+     */
+    function supportMatch(empName, riName) {
+        const empTokens = supportTokens(empName);
+        const riTokens  = supportTokens(riName);
+        const empSet    = new Set(empTokens);
+        const riRaw     = riName.toLowerCase();
+
+        // Pass 1 — exact token match
+        if (riTokens.some(t => empSet.has(t))) return true;
+
+        // Pass 2 — employee token is a substring of a recurrence token (camelCase / "forX" patterns)
+        for (const et of empTokens) {
+            if (et.length < 4) continue;
+            if (riRaw.includes(et)) return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Format Zoho recurring invoice frequency into a readable label.
+     * Uses repeat_every + recurrence_frequency fields from the API response.
+     */
+    function formatFrequency(ri) {
+        const freq  = (ri.recurrence_frequency || '').toLowerCase();
+        const every = parseInt(ri.repeat_every || 1, 10);
+
+        if (freq === 'months' || freq === 'month') {
+            if (every === 1)  return 'Monthly';
+            if (every === 2)  return 'Every 2 Months';
+            if (every === 3)  return 'Quarterly';
+            if (every === 6)  return 'Half-Yearly';
+            if (every === 12) return 'Annual';
+            return 'Every ' + every + ' Months';
+        }
+        if (freq === 'weeks' || freq === 'week') {
+            return every === 1 ? 'Weekly' : 'Every ' + every + ' Weeks';
+        }
+        if (freq === 'years' || freq === 'year') {
+            return every === 1 ? 'Annual' : 'Every ' + every + ' Years';
+        }
+        if (freq === 'days' || freq === 'day') {
+            return every === 1 ? 'Daily' : 'Every ' + every + ' Days';
+        }
+        return freq ? (freq.charAt(0).toUpperCase() + freq.slice(1)) : '\u2014';
+    }
+
+    function renderSupportTab($pane, item) {
+        $pane.html('<div class="detail-loading"><span class="spinner"></span></div>');
+
+        $.getJSON(PROXY + '?endpoint=books_recurring_all')
+            .done(function (res) {
+                const all = res.data || [];
+
+                const matched = all.filter(function (ri) {
+                    return supportMatch(item.name, ri.recurrence_name);
+                });
+
+                if (matched.length === 0) {
+                    $pane.html('<p class="detail-empty-msg">No recurring pledges found for this employee.</p>');
+                    return;
+                }
+
+                // The list endpoint returns total:0 — fetch each detail in parallel
+                // to get the real Invoice Amount field.
+                $pane.html('<div class="detail-loading"><span class="spinner"></span></div>');
+
+                const enriched = matched.map(r => Object.assign({}, r, { invoiceAmount: 0 }));
+                let remaining  = matched.length;
+
+                function calcMonthlyPledge(r) {
+                    const amt   = r.invoiceAmount || 0;
+                    const freq  = (r.recurrence_frequency || '').toLowerCase();
+                    const every = parseInt(r.repeat_every || 1, 10) || 1;
+
+                    if (freq === 'months' || freq === 'month') return amt / every;
+                    if (freq === 'weeks'  || freq === 'week')  return (amt / every) * (52 / 12);
+                    if (freq === 'years'  || freq === 'year')  return amt / (every * 12);
+                    if (freq === 'days'   || freq === 'day')   return (amt / every) * (365 / 12);
+                    return amt; // fallback — treat as monthly
+                }
+
+                function renderSupportTable() {
+                    // For each customer name keep only the row with the highest monthly pledge.
+                    const bestMap = {};
+                    enriched.forEach(r => {
+                        const key = r.customer_name || '\u2014';
+                        if (!bestMap[key] || calcMonthlyPledge(r) > calcMonthlyPledge(bestMap[key])) {
+                            bestMap[key] = r;
+                        }
+                    });
+                    const deduped = Object.values(bestMap)
+                        .sort((a, b) => (a.customer_name || '').localeCompare(b.customer_name || ''));
+
+                    const monthlyTotal = deduped.reduce((s, r) => s + calcMonthlyPledge(r), 0);
+
+                    const rows = deduped.map(r => `<tr>
+                        <td>${escHtml(r.customer_name || '\u2014')}</td>
+                        <td class="amount-cell">${formatCurrency(r.invoiceAmount)}</td>
+                        <td>${escHtml(formatFrequency(r))}</td>
+                        <td class="amount-cell">${formatCurrency(calcMonthlyPledge(r))}</td>
+                    </tr>`).join('');
+
+                    $pane.html(`
+                        <div class="detail-table-wrap">
+                            <table class="data-table support-table">
+                                <thead><tr>
+                                    <th>Customer Name</th>
+                                    <th class="amount-cell">Amount</th>
+                                    <th>Frequency</th>
+                                    <th class="amount-cell">Monthly Pledge</th>
+                                </tr></thead>
+                                <tbody>${rows}</tbody>
+                                <tfoot><tr class="total-row">
+                                    <td colspan="3">Total Monthly</td>
+                                    <td class="amount-cell">${formatCurrency(monthlyTotal)}</td>
+                                </tr></tfoot>
+                            </table>
+                        </div>
+                    `);
+                }
+
+                matched.forEach(function (r, i) {
+                    $.getJSON(PROXY + '?endpoint=books_recurring_detail&recurring_invoice_id=' + encodeURIComponent(r.recurring_invoice_id))
+                        .done(function (res) {
+                            const detail = res.data || {};
+                            enriched[i].invoiceAmount = parseFloat(detail.amount || detail.sub_total || 0);
+                        })
+                        .always(function () {
+                            if (--remaining === 0) renderSupportTable();
+                        });
+                });
+            })
+            .fail(function () {
+                $pane.html('<p class="detail-empty-msg error-msg">Failed to load support data. Try refreshing.</p>');
+            });
     }
 
     // -------------------------------------------------------------------------

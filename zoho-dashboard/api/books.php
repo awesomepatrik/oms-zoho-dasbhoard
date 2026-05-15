@@ -11,11 +11,67 @@
 require_once __DIR__ . '/../lib/helpers.php';
 
 /**
- * Fetch all recurring invoices (pledge schedules).
+ * Fetch all recurring invoices (pledge schedules) — active only.
  */
 function books_getRecurringInvoices(string $token): array
 {
-    return books_paginate($token, '/recurringinvoices', 'recurringinvoices', ['filter_by' => 'Status.Active']);
+    return books_recurringPaginate($token, ['filter_by' => 'Status.Active']);
+}
+
+/**
+ * Fetch all recurring invoices regardless of status (used by Support tab matching).
+ */
+function books_getAllRecurringInvoices(string $token): array
+{
+    return books_recurringPaginate($token);
+}
+
+/**
+ * Fetch the full detail of a single recurring invoice by ID.
+ * The detail response contains the actual 'amount' (Invoice Amount) field
+ * that is absent from the list endpoint.
+ */
+function books_getRecurringDetail(string $token, string $riId): array
+{
+    $cfg = get_config();
+    $url = rtrim($cfg['books_api_base'], '/') . '/recurringinvoices/' . rawurlencode($riId)
+         . '?' . http_build_query(['organization_id' => $cfg['books_org_id']]);
+    $d = books_get($token, $url);
+    return $d['recurring_invoice'] ?? [];
+}
+
+/**
+ * Paginate /recurringinvoices, tolerating both response-key spellings:
+ *   - 'recurring_invoices'  (v3 documented key)
+ *   - 'recurringinvoices'   (alternate spelling seen in some regions)
+ */
+function books_recurringPaginate(string $token, array $extraParams = []): array
+{
+    $cfg     = get_config();
+    $baseUrl = rtrim($cfg['books_api_base'], '/') . '/recurringinvoices';
+    $orgId   = $cfg['books_org_id'];
+    $page    = 1;
+    $records = [];
+
+    do {
+        $url      = $baseUrl . '?' . http_build_query(
+            array_merge(['organization_id' => $orgId, 'page' => $page], $extraParams)
+        );
+        $response = books_get($token, $url);
+
+        // Zoho Books returns either 'recurring_invoices' or 'recurringinvoices'.
+        $data = $response['recurring_invoices'] ?? $response['recurringinvoices'] ?? null;
+        if ($data === null || !is_array($data)) {
+            error_log('books_recurringPaginate: unexpected response keys: ' . implode(', ', array_keys($response)));
+            break;
+        }
+
+        $records = array_merge($records, $data);
+        $hasMore = $response['page_context']['has_more_page'] ?? false;
+        $page++;
+    } while ($hasMore);
+
+    return $records;
 }
 
 /**
@@ -85,13 +141,8 @@ function books_getEmployeeContact(string $token, string $itemId): array
     $baseUrl = rtrim($cfg['books_api_base'], '/');
     $orgQs   = http_build_query(['organization_id' => $cfg['books_org_id']]);
 
-    // Get item from cache or API.
-    $itemCache = new ApiCache("books_item_detail_{$itemId}");
-    $item      = $itemCache->isValid(7200) ? $itemCache->read() : null;
-    if (!$item) {
-        $d    = books_get($token, "{$baseUrl}/items/" . rawurlencode($itemId) . "?{$orgQs}");
-        $item = $d['item'] ?? [];
-    }
+    $d    = books_get($token, "{$baseUrl}/items/" . rawurlencode($itemId) . "?{$orgQs}");
+    $item = $d['item'] ?? [];
 
     // 1. Use the "Project Manager" tag — it holds the missionary/family name.
     $searchName = '';
@@ -141,28 +192,36 @@ function books_getEmployeeContact(string $token, string $itemId): array
 }
 
 /**
- * Return a map of item_id => ['pm_id' => ..., 'pm_name' => ...] by scanning
- * cached item detail files. No extra API calls — uses what is already cached.
+ * Return a map of item_id => ['pm_id' => ..., 'pm_name' => ...].
+ * Fetches every item's detail directly from the Zoho API (no cache).
+ * Custom fields (including Project Manager) are only available in the detail endpoint.
  */
-function books_getItemsPmMap(string $_token): array
+function books_getItemsPmMap(string $token): array
 {
-    $cfg      = get_config();
-    $cacheDir = rtrim($cfg['cache_dir'], '/\\');
-    $map      = [];
+    $cfg     = get_config();
+    $baseUrl = rtrim($cfg['books_api_base'], '/');
+    $orgQs   = http_build_query(['organization_id' => $cfg['books_org_id']]);
 
-    foreach (glob("{$cacheDir}/books_item_detail_*.json") as $file) {
-        $raw = @file_get_contents($file);
-        if (!$raw) continue;
-        $payload = json_decode($raw, true);
-        $item    = $payload['data'] ?? null;
-        if (!$item || empty($item['item_id'])) continue;
+    $items = books_getItems($token);
+    $map   = [];
+
+    foreach ($items as $stub) {
+        $itemId = (string)($stub['item_id'] ?? '');
+        if ($itemId === '') continue;
+
+        try {
+            $d    = books_get($token, "{$baseUrl}/items/" . rawurlencode($itemId) . "?{$orgQs}");
+            $item = $d['item'] ?? [];
+        } catch (RuntimeException $e) {
+            continue;
+        }
 
         foreach ($item['custom_fields'] ?? [] as $cf) {
             if (stripos($cf['label'] ?? '', 'project manager') !== false) {
                 $pmId   = trim((string)($cf['value'] ?? ''));
                 $pmName = trim((string)($cf['value_formatted'] ?? $pmId));
                 if ($pmId !== '') {
-                    $map[$item['item_id']] = ['pm_id' => $pmId, 'pm_name' => $pmName];
+                    $map[$itemId] = ['pm_id' => $pmId, 'pm_name' => $pmName];
                 }
                 break;
             }
@@ -180,7 +239,6 @@ function books_getItemsPmMap(string $_token): array
 function books_getItemCustomFields(string $token): array
 {
     $cfg         = get_config();
-    $cacheDir    = rtrim($cfg['cache_dir'], '/\\');
     $msrKeywords = ['msr', 'monthly support', 'support requirement', 'support req'];
 
     $normalize = function (array $cf): array {
@@ -188,20 +246,7 @@ function books_getItemCustomFields(string $token): array
         return ['customfield_id' => $id, 'field_id' => $id, 'label' => $cf['label'] ?? ''];
     };
 
-    // 1. Scan existing item-detail cache files — zero extra API calls.
-    foreach (glob($cacheDir . '/books_item_detail_*.json') as $file) {
-        $payload = @json_decode(@file_get_contents($file), true);
-        foreach ($payload['data']['custom_fields'] ?? [] as $cf) {
-            $lbl = strtolower($cf['label'] ?? '');
-            foreach ($msrKeywords as $kw) {
-                if (str_contains($lbl, $kw)) {
-                    return [$normalize($cf)];
-                }
-            }
-        }
-    }
-
-    // 2. Fallback: ask Zoho Books settings API for item custom field definitions.
+    // Ask Zoho Books settings API for item custom field definitions.
     // Zoho returns the full module map: { "item": [...], "invoice": [...], ... }
     $baseUrl = rtrim($cfg['books_api_base'], '/');
     $orgQs   = http_build_query(['organization_id' => $cfg['books_org_id']]);
@@ -226,39 +271,16 @@ function books_getItemCustomFields(string $token): array
 }
 
 /**
- * Return a map of item_id => true for every item whose invoice cache file
- * exists on disk and contains at least one invoice record.
- *
- * Reads only local cache files — makes ZERO Zoho API calls.
- * Used by the employees list to filter without triggering rate limits.
+ * Return a map of item_id => true for every item that appears in at least
+ * one paid invoice. Builds the invoice index directly from the Zoho API.
  */
-function books_getItemInvoiceStatus(string $_token): array
+function books_getItemInvoiceStatus(string $token): array
 {
-    // Prefer the global invoice index (accurate, built once for all employees).
-    $indexCache = new ApiCache('books_invoice_index_v3');
-    if ($indexCache->isValid(86400)) {
-        $status = [];
-        foreach (array_keys($indexCache->read()) as $key) {
-            // Skip name: keys — we only want item_id keys here.
-            if (!str_starts_with($key, 'name:')) {
-                $status[$key] = true;
-            }
-        }
-        return $status;
-    }
-
-    // Index not yet built — fall back to per-item cache files on disk.
-    $config   = get_config();
-    $cacheDir = rtrim($config['cache_dir'], '/\\');
-    $status   = [];
-    foreach (glob($cacheDir . '/books_invoices_by_item_*.json') as $file) {
-        $payload = json_decode(file_get_contents($file), true);
-        if (!empty($payload['data']) && is_array($payload['data'])) {
-            $base   = basename($file, '.json');
-            $itemId = str_replace('books_invoices_by_item_', '', $base);
-            if ($itemId !== '') {
-                $status[$itemId] = true;
-            }
+    $index  = books_getInvoiceIndex($token);
+    $status = [];
+    foreach (array_keys($index) as $key) {
+        if (!str_starts_with($key, 'name:') && !str_starts_with($key, 'tokens:')) {
+            $status[$key] = true;
         }
     }
     return $status;
@@ -353,7 +375,7 @@ function books_getItemIdsWithInvoices(string $token): array
  *
  * @return array  { "item_id" => [compact_invoice, …], "name:foo" => […], … }
  */
-function books_buildInvoiceIndex(string $token, bool $forceRefresh = false): array
+function books_buildInvoiceIndex(string $token): array
 {
     set_time_limit(600);   // up to 10 minutes for the initial build
 
@@ -361,20 +383,12 @@ function books_buildInvoiceIndex(string $token, bool $forceRefresh = false): arr
     $orgId   = $config['books_org_id'];
     $baseUrl = rtrim($config['books_api_base'], '/');
 
-    // Always fetch a fresh invoice list on force-refresh so no invoices are
-    // missed due to a stale cache.  Otherwise reuse the 1-hour list cache.
-    $listCache = new ApiCache('books_invoices');
-    if (!$forceRefresh && $listCache->isValid(3600)) {
-        $list = $listCache->read();
-    } else {
-        $list = books_paginate($token, '/invoices', 'invoices', [
-            'filter_by'   => 'Status.Paid',
-            'per_page'    => 200,
-            'sort_column' => 'date',
-            'sort_order'  => 'D',
-        ]);
-        $listCache->write($list);   // refresh the list cache too
-    }
+    $list = books_paginate($token, '/invoices', 'invoices', [
+        'filter_by'   => 'Status.Paid',
+        'per_page'    => 200,
+        'sort_column' => 'date',
+        'sort_order'  => 'D',
+    ]);
 
     if (empty($list)) {
         return [];
@@ -477,93 +491,75 @@ function books_buildInvoiceIndex(string $token, bool $forceRefresh = false): arr
 }
 
 /**
- * Return (or trigger a build of) the global invoice index.
+ * Build and return the global invoice index on every call (no cache).
  * Used by books_getInvoicesByItem and books_getItemInvoiceStatus.
  */
 function books_getInvoiceIndex(string $token): array
 {
-    // v3 — cache key bumped: tokens index added + force-refresh now propagates.
-    $forceRefresh = !empty($GLOBALS['books_force_refresh']);
-    $cache        = new ApiCache('books_invoice_index_v3');
-
-    if (!$forceRefresh && $cache->isValid(86400)) {   // 24-hour TTL
-        return $cache->read();
-    }
-
-    $index = books_buildInvoiceIndex($token, $forceRefresh);
-    $cache->write($index);
-    return $index;
+    return books_buildInvoiceIndex($token);
 }
 
 /**
  * Return paid invoices that contain a specific item (employee).
- *
- * Reads from the global invoice index (built once, shared across all employees).
- * First call after cache expiry triggers the index build (~3-5 min for 683 invoices);
- * all subsequent calls across all employees are instant (from cache).
+ * Uses the Zoho Books item_id filter directly — no index required.
  */
 function books_getInvoicesByItem(string $token, string $itemId): array
 {
-    // Resolve item name from items cache (zero extra API calls).
-    $itemName   = '';
-    $itemsCache = new ApiCache('books_items');
-    if ($itemsCache->isValid(7200)) {
-        foreach ($itemsCache->read() as $it) {
-            if ((string)($it['item_id'] ?? '') === (string)$itemId) {
-                $itemName = books_normalise_name($it['name'] ?? '');
-                break;
-            }
+    return books_paginate($token, '/invoices', 'invoices', [
+        'filter_by' => 'Status.Paid',
+        'item_id'   => $itemId,
+    ]);
+}
+
+/**
+ * Return recurring invoices that contain a specific item (employee).
+ *
+ * Fetches the full list of recurring invoices, then fetches each detail record
+ * directly to read line_items and filter by item_id.
+ * Each returned record carries the per-line-item amount as the monthly pledge.
+ */
+function books_getRecurringByItem(string $token, string $itemId): array
+{
+    $cfg     = get_config();
+    $orgId   = $cfg['books_org_id'];
+    $baseUrl = rtrim($cfg['books_api_base'], '/');
+
+    $list   = books_paginate($token, '/recurringinvoices', 'recurringinvoices');
+    $result = [];
+
+    foreach ($list as $stub) {
+        $riId = $stub['recurring_invoice_id'] ?? '';
+        if ($riId === '') continue;
+
+        $url = "{$baseUrl}/recurringinvoices/" . rawurlencode($riId)
+             . '?' . http_build_query(['organization_id' => $orgId]);
+        try {
+            $d = books_get($token, $url);
+        } catch (RuntimeException $e) {
+            error_log("books_getRecurringByItem: failed to fetch {$riId}: " . $e->getMessage());
+            continue;
+        }
+        $ri = $d['recurring_invoice'] ?? [];
+        if (empty($ri)) continue;
+
+        foreach ($ri['line_items'] ?? [] as $li) {
+            if ((string)($li['item_id'] ?? '') !== (string)$itemId) continue;
+
+            $liAmt    = (float)($li['item_total'] ?? $li['rate'] ?? $ri['amount'] ?? 0);
+            $result[] = [
+                'recurring_invoice_id' => $ri['recurring_invoice_id'] ?? '',
+                'recurrence_name'      => $ri['recurrence_name']      ?? '',
+                'customer_name'        => $ri['customer_name']        ?? '',
+                'amount'               => $liAmt,
+                'status'               => $ri['status']               ?? '',
+                'next_invoice_date'    => $ri['next_invoice_date']    ?? '',
+                'start_date'           => $ri['start_date']           ?? '',
+            ];
+            break; // one entry per recurring invoice per employee
         }
     }
-    if ($itemName === '') {
-        $cfg      = get_config();
-        $d        = books_get($token, rtrim($cfg['books_api_base'], '/') . '/items/' . rawurlencode($itemId) . '?' . http_build_query(['organization_id' => $cfg['books_org_id']]));
-        $itemName = books_normalise_name($d['item']['name'] ?? '');
-    }
 
-    $index      = books_getInvoiceIndex($token);
-    $itemTokens = $itemName !== '' ? books_name_tokens($itemName) : '';
-
-    // Pass 1 — exact item_id match (most reliable).
-    $matched = $index[(string)$itemId] ?? [];
-
-    // Pass 2 — exact normalised name match.
-    if ($itemName !== '') {
-        $matched = array_merge($matched, $index['name:' . $itemName] ?? []);
-    }
-
-    // Pass 3 — exact sorted-word token match (handles word-order / punctuation variants).
-    if ($itemTokens !== '') {
-        $matched = array_merge($matched, $index['tokens:' . $itemTokens] ?? []);
-    }
-
-    // Pass 4 — partial name/token matches for suffixed descriptions
-    //           e.g. "Kumar Ben & Christie - Monthly Support".
-    foreach ($index as $key => $records) {
-        $prefix = null;
-        if (str_starts_with($key, 'name:'))   $prefix = substr($key, 5);
-        if (str_starts_with($key, 'tokens:')) $prefix = substr($key, 7);
-        if ($prefix === null) continue;
-
-        $isName   = str_starts_with($key, 'name:');
-        $needle   = $isName ? $itemName : $itemTokens;
-        if ($needle === '' || $prefix === $needle) continue;  // already handled
-
-        if (str_contains($prefix, $needle) || str_contains($needle, $prefix)) {
-            $matched = array_merge($matched, $records);
-        }
-    }
-
-    // Deduplicate by invoice_id across all passes.
-    $seen    = [];
-    $matched = array_filter($matched, function ($r) use (&$seen) {
-        $id = $r['invoice_id'] ?? '';
-        if ($id === '' || isset($seen[$id])) return false;
-        $seen[$id] = true;
-        return true;
-    });
-
-    return array_values($matched);
+    return $result;
 }
 
 // -----------------------------------------------------------------------------
