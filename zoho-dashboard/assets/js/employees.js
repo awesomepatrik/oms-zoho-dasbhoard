@@ -521,6 +521,24 @@ $(function () {
                 </div>
 
                 <div class="tab-pane" id="tab-overview">
+                    <div class="ov-kpi-bar">
+                        <div class="ov-kpi-card">
+                            <span class="ov-kpi-label">Monthly MSR</span>
+                            <span class="ov-kpi-value">${escHtml(formatCurrency(msrMonthlyRequired))}</span>
+                        </div>
+                        <div class="ov-kpi-card">
+                            <span class="ov-kpi-label">Monthly Pledges</span>
+                            <span class="ov-kpi-value" id="ov-pledges-total">&#8230;</span>
+                        </div>
+                        <div class="ov-kpi-card">
+                            <span class="ov-kpi-label">Monthly Avg Income</span>
+                            <span class="ov-kpi-value">${escHtml(formatCurrency(rpt.monthlyAvg))}</span>
+                        </div>
+                        <div class="ov-kpi-card">
+                            <span class="ov-kpi-label">Avg Deficit</span>
+                            <span class="ov-kpi-value" id="ov-avg-deficit">&#8230;</span>
+                        </div>
+                    </div>
                     <div class="ov-wrap">${overviewRows}</div>
                     <div class="reports-layout">
 
@@ -878,6 +896,9 @@ $(function () {
         // Initialise charts immediately — canvases are now in the Overview tab.
         initReportCharts(rpt);
 
+        // Populate Monthly Pledges and Avg Deficit KPIs in the Overview bar.
+        loadOvPledgesTotal(item, rpt.monthlyAvg);
+
         // Tab switching — load support data lazily on first click.
         let supportReady = false;
         $detail.find('.tab-btn').on('click', function () {
@@ -983,6 +1004,63 @@ $(function () {
         return freq ? (freq.charAt(0).toUpperCase() + freq.slice(1)) : '\u2014';
     }
 
+    function calcMonthlyPledge(r) {
+        const amt   = r.invoiceAmount || 0;
+        const freq  = (r.recurrence_frequency || '').toLowerCase();
+        const every = parseInt(r.repeat_every || 1, 10) || 1;
+        if (freq === 'months' || freq === 'month') return amt / every;
+        if (freq === 'weeks'  || freq === 'week')  return (amt / every) * (52 / 12);
+        if (freq === 'years'  || freq === 'year')  return amt / (every * 12);
+        if (freq === 'days'   || freq === 'day')   return (amt / every) * (365 / 12);
+        return amt;
+    }
+
+    function loadOvPledgesTotal(item, monthlyAvg) {
+        const $pledges = $('#ov-pledges-total');
+        const $deficit = $('#ov-avg-deficit');
+        $.getJSON(PROXY + '?endpoint=books_recurring_all')
+            .done(function (res) {
+                const matched = (res.data || []).filter(ri => supportMatch(item.name, ri.recurrence_name));
+                if (matched.length === 0) {
+                    $pledges.text(formatCurrency(0));
+                    const deficit = 0 - monthlyAvg;
+                    $deficit.text(formatCurrency(deficit))
+                        .toggleClass('kpi-deficit', deficit > 0)
+                        .toggleClass('kpi-surplus', deficit <= 0);
+                    return;
+                }
+
+                const enriched = matched.map(r => Object.assign({}, r, { invoiceAmount: 0 }));
+                let remaining  = matched.length;
+
+                matched.forEach(function (r, i) {
+                    $.getJSON(PROXY + '?endpoint=books_recurring_detail&recurring_invoice_id=' + encodeURIComponent(r.recurring_invoice_id))
+                        .done(function (res2) {
+                            const d = res2.data || {};
+                            enriched[i].invoiceAmount = parseFloat(d.amount || d.sub_total || 0);
+                        })
+                        .always(function () {
+                            if (--remaining === 0) {
+                                const bestMap = {};
+                                enriched.forEach(r => {
+                                    const key = r.customer_name || '—';
+                                    if (!bestMap[key] || calcMonthlyPledge(r) > calcMonthlyPledge(bestMap[key])) {
+                                        bestMap[key] = r;
+                                    }
+                                });
+                                const pledgesTotal = Object.values(bestMap).reduce((s, r) => s + calcMonthlyPledge(r), 0);
+                                const deficit      = pledgesTotal - monthlyAvg;
+                                $pledges.text(formatCurrency(pledgesTotal));
+                                $deficit.text(formatCurrency(deficit))
+                                    .toggleClass('kpi-deficit', deficit > 0)
+                                    .toggleClass('kpi-surplus', deficit <= 0);
+                            }
+                        });
+                });
+            })
+            .fail(function () { $pledges.text('—'); $deficit.text('—'); });
+    }
+
     function renderSupportTab($pane, item) {
         $pane.html('<div class="detail-loading"><span class="spinner"></span></div>');
 
@@ -1005,18 +1083,6 @@ $(function () {
 
                 const enriched = matched.map(r => Object.assign({}, r, { invoiceAmount: 0 }));
                 let remaining  = matched.length;
-
-                function calcMonthlyPledge(r) {
-                    const amt   = r.invoiceAmount || 0;
-                    const freq  = (r.recurrence_frequency || '').toLowerCase();
-                    const every = parseInt(r.repeat_every || 1, 10) || 1;
-
-                    if (freq === 'months' || freq === 'month') return amt / every;
-                    if (freq === 'weeks'  || freq === 'week')  return (amt / every) * (52 / 12);
-                    if (freq === 'years'  || freq === 'year')  return amt / (every * 12);
-                    if (freq === 'days'   || freq === 'day')   return (amt / every) * (365 / 12);
-                    return amt; // fallback — treat as monthly
-                }
 
                 function renderSupportTable() {
                     // For each customer name keep only the row with the highest monthly pledge.
@@ -1122,11 +1188,15 @@ $(function () {
             : 0;
         const percentOutstanding = Math.max(0, 100 - percentFunded);
 
+        const monthsWithData = monthlyIncome.filter(v => v > 0).length;
+        const monthlyAvg     = monthsWithData > 0 ? yearTotal / monthsWithData : 0;
+
         return {
             monthlyIncome,
             cumulativeIncome,
             balance,
             yearTotal,
+            monthlyAvg,
             totalYearlySupport,
             avgAnnualIncome,
             percentFunded,

@@ -651,6 +651,38 @@ body.app-body {
     word-break: break-word;
 }
 
+/* ── Overview KPI bar ──────────────────────────────────────────────────── */
+.ov-kpi-bar {
+    display: flex;
+    gap: 16px;
+    padding: 16px 0 8px;
+}
+.ov-kpi-card {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: var(--colour-card);
+    border: 1px solid var(--colour-border);
+    border-left: 3px solid var(--colour-secondary);
+    border-radius: var(--radius);
+    padding: 14px 20px;
+}
+.ov-kpi-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--colour-text-muted);
+}
+.ov-kpi-value {
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: var(--colour-text);
+}
+.ov-kpi-value.kpi-surplus { color: #10b981; }
+.ov-kpi-value.kpi-deficit { color: #ef4444; }
+
 /* ── Overview profile card ─────────────────────────────────────────────── */
 .ov-wrap { width: 100%; }
 .ov-card { width: 100%; }
