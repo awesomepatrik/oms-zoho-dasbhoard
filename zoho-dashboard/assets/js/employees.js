@@ -305,9 +305,12 @@ $(function () {
                 </div>
             </div>`;
 
-        // Transactions
+        // Transactions — last 12 months only
+        const twelveMonthsAgo = new Date();
+        twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
+
         const sortedInvoices = [...invoices]
-            .filter(inv => inv.date)
+            .filter(inv => inv.date && new Date(inv.date) >= twelveMonthsAgo)
             .sort((a, b) => {
                 const dateDiff = new Date(b.date) - new Date(a.date);
                 if (dateDiff !== 0) return dateDiff;
@@ -910,7 +913,7 @@ $(function () {
 
             if (tab === 'support' && !supportReady) {
                 supportReady = true;
-                renderSupportTab($('#tab-support'), item);
+                renderSupportTab($('#tab-support'), item, msrMonthlyRequired);
             }
         });
     }
@@ -1061,7 +1064,7 @@ $(function () {
             .fail(function () { $pledges.text('—'); $deficit.text('—'); });
     }
 
-    function renderSupportTab($pane, item) {
+    function renderSupportTab($pane, item, msrMonthly) {
         $pane.html('<div class="detail-loading"><span class="spinner"></span></div>');
 
         $.getJSON(PROXY + '?endpoint=books_recurring_all')
@@ -1097,29 +1100,59 @@ $(function () {
                         .sort((a, b) => (a.customer_name || '').localeCompare(b.customer_name || ''));
 
                     const monthlyTotal = deduped.reduce((s, r) => s + calcMonthlyPledge(r), 0);
+                    const totalPct     = msrMonthly > 0 ? (monthlyTotal / msrMonthly) * 100 : 0;
+                    const shortfall    = (msrMonthly || 0) - monthlyTotal;
 
-                    const rows = deduped.map(r => `<tr>
+                    const rows = deduped.map(r => {
+                        const mp  = calcMonthlyPledge(r);
+                        const yp  = mp * 12;
+                        const pct = msrMonthly > 0 ? (mp / msrMonthly) * 100 : 0;
+                        return `<tr>
                         <td>${escHtml(r.customer_name || '\u2014')}</td>
                         <td class="amount-cell">${formatCurrency(r.invoiceAmount)}</td>
                         <td>${escHtml(formatFrequency(r))}</td>
-                        <td class="amount-cell">${formatCurrency(calcMonthlyPledge(r))}</td>
-                    </tr>`).join('');
+                        <td class="amount-cell">${formatCurrency(mp)}</td>
+                        <td class="amount-cell">${formatCurrency(yp)}</td>
+                        <td class="amount-cell">${pct.toFixed(1)}%</td>
+                    </tr>`;
+                    }).join('');
 
                     $pane.html(`
-                        <div class="detail-table-wrap">
+                        <div class="detail-table-wrap support-table-wrap">
                             <table class="data-table support-table">
                                 <thead><tr>
                                     <th>Customer Name</th>
                                     <th class="amount-cell">Amount</th>
                                     <th>Frequency</th>
                                     <th class="amount-cell">Monthly Pledge</th>
+                                    <th class="amount-cell">Yearly Pledge</th>
+                                    <th class="amount-cell">% of MSR</th>
                                 </tr></thead>
                                 <tbody>${rows}</tbody>
                                 <tfoot><tr class="total-row">
-                                    <td colspan="3">Total Monthly</td>
+                                    <td colspan="3">Total</td>
                                     <td class="amount-cell">${formatCurrency(monthlyTotal)}</td>
+                                    <td class="amount-cell">${formatCurrency(monthlyTotal * 12)}</td>
+                                    <td class="amount-cell">${totalPct.toFixed(1)}%</td>
                                 </tr></tfoot>
                             </table>
+                        </div>
+                        <div class="support-summary-bar">
+                            <div class="support-kpi-card ${shortfall > 0 ? 'kpi-deficit' : 'kpi-surplus'}">
+                                <span class="support-kpi-label">Monthly Shortfall</span>
+                                <span class="support-kpi-value">${escHtml(formatCurrency(shortfall))}</span>
+                                <span class="support-kpi-sub">MSR ${escHtml(formatCurrency(msrMonthly || 0))} &minus; Pledges ${escHtml(formatCurrency(monthlyTotal))}</span>
+                            </div>
+                            <div class="support-kpi-card kpi-surplus">
+                                <span class="support-kpi-label">Percent Funded</span>
+                                <span class="support-kpi-value">${totalPct.toFixed(1)}%</span>
+                                <span class="support-kpi-sub">of Monthly Support Required</span>
+                            </div>
+                            <div class="support-kpi-card kpi-deficit">
+                                <span class="support-kpi-label">Percent Outstanding</span>
+                                <span class="support-kpi-value">${Math.max(0, 100 - totalPct).toFixed(1)}%</span>
+                                <span class="support-kpi-sub">remaining to be raised</span>
+                            </div>
                         </div>
                     `);
                 }

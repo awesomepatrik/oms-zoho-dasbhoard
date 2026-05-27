@@ -803,6 +803,22 @@ body.app-body {
     border-radius: var(--radius);
     overflow: hidden;
 }
+/* Support tab — full height, sticky header + footer */
+#tab-support {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    padding: 1rem 1.5rem;
+}
+#tab-support.is-hidden { display: none; }
+
+.detail-table-wrap.support-table-wrap {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    max-height: none;
+}
 
 .detail-empty-msg {
     color: var(--colour-muted);
@@ -818,6 +834,64 @@ body.app-body {
 }
 
 .invoices-table tfoot .total-row td {
+    font-weight: 700;
+    border-top: 2px solid var(--colour-border);
+    color: var(--colour-primary);
+    background: #f8fafc;
+}
+
+/* Support tab — summary bar */
+.support-summary-bar {
+    display: flex;
+    gap: 12px;
+    padding: 1rem 0 0;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+}
+.support-kpi-card {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 2px;
+    background: var(--colour-card);
+    border: 1px solid var(--colour-border);
+    border-radius: var(--radius);
+    padding: 12px 20px;
+    border-left-width: 3px;
+}
+.support-kpi-card.kpi-deficit { border-left-color: #ef4444; }
+.support-kpi-card.kpi-surplus { border-left-color: #10b981; }
+.support-kpi-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--colour-text-muted);
+}
+.support-kpi-value {
+    font-size: 1.25rem;
+    font-weight: 700;
+}
+.support-kpi-card.kpi-deficit .support-kpi-value { color: #ef4444; }
+.support-kpi-card.kpi-surplus .support-kpi-value { color: #10b981; }
+.support-kpi-sub {
+    font-size: 0.75rem;
+    color: var(--colour-text-muted);
+}
+
+/* Support tab — sticky headers + bold footer */
+.support-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--colour-bg);
+    box-shadow: 0 1px 0 var(--colour-border);
+}
+.support-table tfoot {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+}
+.support-table tfoot .total-row td {
     font-weight: 700;
     border-top: 2px solid var(--colour-border);
     color: var(--colour-primary);
