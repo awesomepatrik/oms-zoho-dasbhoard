@@ -512,6 +512,118 @@ function books_getInvoicesByItem(string $token, string $itemId): array
 }
 
 /**
+ * Return paid invoice transactions for a specific item over the last 12 months.
+ *
+ * Fetches the paid invoice list filtered by item_id and date, then fetches each
+ * invoice detail server-side to extract the correct per-line-item qty, price, and
+ * total. Only invoices that actually contain a matching line_item are returned.
+ */
+function books_getInvoiceTransactions(string $token, string $itemId): array
+{
+    $cfg     = get_config();
+    $orgId   = $cfg['books_org_id'];
+    $baseUrl = rtrim($cfg['books_api_base'], '/');
+
+    $dateFrom = date('Y-m-d', strtotime('-12 months'));
+
+    $list = books_paginate($token, '/invoices', 'invoices', [
+        'filter_by'  => 'Status.Paid',
+        'item_id'    => $itemId,
+        'date_start' => $dateFrom,
+        'per_page'   => 200,
+    ]);
+
+    if (empty($list)) return [];
+
+    // Fetch all invoice details in one parallel curl_multi pass.
+    // Filtered list is per-employee over 12 months (typically 12-52 invoices),
+    // so one batch is safe within Zoho's rate limit.
+    $result  = [];
+    $pending = array_values(array_filter($list, fn($s) => ($s['invoice_id'] ?? '') !== ''));
+
+    for ($attempt = 0; $attempt < 3 && !empty($pending); $attempt++) {
+        if ($attempt > 0) sleep(6);
+
+        $mh      = curl_multi_init();
+        $handles = [];
+
+        foreach ($pending as $stub) {
+            $ch = curl_init(
+                "{$baseUrl}/invoices/" . rawurlencode($stub['invoice_id'])
+                . '?' . http_build_query(['organization_id' => $orgId])
+            );
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT        => 20,
+                CURLOPT_SSL_VERIFYPEER => true,
+                CURLOPT_HTTPHEADER     => [
+                    'Authorization: Zoho-oauthtoken ' . $token,
+                    'Accept: application/json',
+                ],
+            ]);
+            curl_multi_add_handle($mh, $ch);
+            $handles[spl_object_id($ch)] = ['ch' => $ch, 'stub' => $stub];
+        }
+
+        do {
+            curl_multi_exec($mh, $running);
+            curl_multi_select($mh);
+        } while ($running > 0);
+
+        $pending = [];
+
+        foreach ($handles as ['ch' => $ch, 'stub' => $stub]) {
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $body     = curl_multi_getcontent($ch);
+            curl_multi_remove_handle($mh, $ch);
+
+            if ($httpCode === 429) {
+                $pending[] = $stub;
+                continue;
+            }
+
+            if ($httpCode !== 200) continue;
+
+            $decoded = json_decode($body, true);
+            $inv     = $decoded['invoice'] ?? [];
+            if (empty($inv)) continue;
+
+            foreach ($inv['line_items'] ?? [] as $li) {
+                if ((string)($li['item_id'] ?? '') !== (string)$itemId) continue;
+
+                $result[] = [
+                    'invoice_id'     => $inv['invoice_id']     ?? '',
+                    'invoice_number' => $inv['invoice_number'] ?? '',
+                    'date'           => $inv['date']           ?? '',
+                    'customer_name'  => $inv['customer_name']  ?? '',
+                    'status'         => $inv['status']         ?? '',
+                    'quantity'       => (float)($li['quantity']   ?? 1),
+                    'price'          => (float)($li['rate']        ?? 0),
+                    'total'          => (float)($li['item_total']  ?? $li['rate'] ?? 0),
+                ];
+                break;
+            }
+        }
+
+        curl_multi_close($mh);
+    }
+
+    // Sort newest first.
+    usort($result, fn($a, $b) => strcmp($b['date'], $a['date']));
+
+    return $result;
+}
+
+function books_getInvoiceDetail(string $token, string $invoiceId): array
+{
+    $cfg = get_config();
+    $url = rtrim($cfg['books_api_base'], '/') . '/invoices/' . rawurlencode($invoiceId)
+         . '?' . http_build_query(['organization_id' => $cfg['books_org_id']]);
+    $d = books_get($token, $url);
+    return $d['invoice'] ?? [];
+}
+
+/**
  * Return recurring invoices that contain a specific item (employee).
  *
  * Fetches the full list of recurring invoices, then fetches each detail record

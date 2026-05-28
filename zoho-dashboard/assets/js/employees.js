@@ -16,12 +16,20 @@ $(function () {
 
     const PROXY = '/oms-zoho-dashboard/zoho-dashboard/api/proxy.php';
 
-    let allEmployees = [];
-    let pmMap        = {};   // item_id => { pm_id, pm_name }
-    let selectedId   = null;
-    let searchQuery  = '';
-    let pmFilter     = '';
-    const _charts    = {};   // active Chart.js instances keyed by canvas id
+    let allEmployees           = [];
+    let pmMap                  = {};   // item_id => { pm_id, pm_name }
+    let selectedId             = null;
+    let searchQuery            = '';
+    let pmFilter               = '';
+    let _recurringAllPromise   = null; // shared per-employee, reset on each loadDetail
+    const _charts              = {};   // active Chart.js instances keyed by canvas id
+
+    function getRecurringAll() {
+        if (!_recurringAllPromise) {
+            _recurringAllPromise = $.getJSON(PROXY + '?endpoint=books_recurring_all');
+        }
+        return _recurringAllPromise;
+    }
 
     // -------------------------------------------------------------------------
     // Boot
@@ -112,7 +120,6 @@ $(function () {
             const active = String(emp.item_id) === String(selectedId) ? ' is-active' : '';
             return `<div class="sidebar-item${active}" data-id="${escAttr(String(emp.item_id))}">
                 <span class="sidebar-item-name">${escHtml(emp.name || '\u2014')}</span>
-                <span class="sidebar-item-rate">${formatCurrency(parseFloat(emp.rate || 0))}</span>
             </div>`;
         }).join('');
 
@@ -152,6 +159,8 @@ $(function () {
     // -------------------------------------------------------------------------
 
     function loadDetail(itemId, forceRefresh) {
+        _recurringAllPromise = null; // reset so new employee gets a fresh fetch
+
         // Destroy any active charts before swapping content.
         Object.keys(_charts).forEach(k => {
             _charts[k].destroy();
@@ -162,11 +171,21 @@ $(function () {
         $detail.html('<div class="detail-loading"><span class="spinner"></span></div>');
 
         const refresh = forceRefresh ? '&refresh=1' : '';
+
+        // Start accurate transactions fetch immediately so it runs in parallel with
+        // everything else. We do NOT wait for it before rendering — it is used in
+        // two ways after the Overview is already visible:
+        //  1. Silently re-draw charts with correct per-line-item amounts.
+        //  2. Serve the Transactions tab instantly (already resolved by then).
+        const transactionsReq = $.getJSON(
+            PROXY + '?endpoint=books_invoice_transactions&item_id=' + encodeURIComponent(itemId)
+        );
+
         $.when(
             $.getJSON(PROXY + '?endpoint=books_item_detail&item_id=' + encodeURIComponent(itemId) + refresh),
             $.getJSON(PROXY + '?endpoint=books_invoices_by_item&item_id=' + encodeURIComponent(itemId)),
         ).done(function (itemDetailRes, invoicesRes) {
-            const item     = itemDetailRes[0].data || null;
+            const item    = itemDetailRes[0].data || null;
             const invoices = invoicesRes[0].data || [];
 
             if (!item) {
@@ -189,7 +208,7 @@ $(function () {
             $.when(cfDefsReq, contactReq).done(function (cfDefsRes, contactRes) {
                 const cfDefs  = Array.isArray(cfDefsRes && cfDefsRes.data) ? cfDefsRes.data : [];
                 const contact = (contactRes && contactRes.data) || {};
-                renderDetail($detail, item, invoices, cfDefs, contact);
+                renderDetail($detail, item, invoices, cfDefs, contact, transactionsReq);
             });
 
         }).fail(function (jqXHR) {
@@ -205,7 +224,7 @@ $(function () {
     // Detail panel rendering
     // -------------------------------------------------------------------------
 
-    function renderDetail($detail, item, invoices, cfDefs, contact) {
+    function renderDetail($detail, item, invoices, cfDefs, contact, transactionsReq) {
         const statusCls  = (item.status || '').toLowerCase() === 'active' ? 'badge-active' : 'badge-stopped';
         const statusText = capitalise(item.status || 'unknown');
 
@@ -273,7 +292,8 @@ $(function () {
         ].join('');
 
         const hasContact  = contact && contact.contact_id;
-        const photoUrl    = (contact && contact.photo_url) || '';
+        const itemImageUrl = PROXY + '?endpoint=books_item_image&item_id=' + encodeURIComponent(item.item_id || '');
+        const photoUrl     = (contact && contact.photo_url) || '';
         const contactName = (contact && contact.contact_name) || '';
 
         const overviewRows = !hasContact
@@ -281,10 +301,11 @@ $(function () {
             : `<div class="ov-card">
                 <div class="ov-layout">
                     <div class="ov-left">
-                        ${photoUrl
-                            ? `<img class="ov-photo" src="${escAttr(photoUrl)}" alt="" onerror="this.style.display='none'">`
-                            : `<div class="ov-photo-fallback">${escHtml((contactName || '?')[0].toUpperCase())}</div>`
-                        }
+                        <img class="ov-photo" src="${escAttr(itemImageUrl)}" alt=""
+                             onerror="this.style.display='none';this.nextElementSibling.style.display=''">
+                        <img class="ov-photo" src="${escAttr(photoUrl)}" alt="" style="display:none"
+                             onerror="this.style.display='none';this.nextElementSibling.style.display=''">
+                        <div class="ov-photo-fallback" style="display:none">${escHtml((contactName || item.name || '?')[0].toUpperCase())}</div>
                         <div class="ov-profile-name">${escHtml(contactName)}</div>
                         <span class="ov-profile-badge">Project Manager</span>
                     </div>
@@ -305,64 +326,6 @@ $(function () {
                 </div>
             </div>`;
 
-        // Transactions — last 12 months only
-        const twelveMonthsAgo = new Date();
-        twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
-
-        const sortedInvoices = [...invoices]
-            .filter(inv => inv.date && new Date(inv.date) >= twelveMonthsAgo)
-            .sort((a, b) => {
-                const dateDiff = new Date(b.date) - new Date(a.date);
-                if (dateDiff !== 0) return dateDiff;
-                // Tie-break by invoice number ascending (lower number = created earlier).
-                const numA = parseInt((a.invoice_number || '').replace(/\D/g, ''), 10) || 0;
-                const numB = parseInt((b.invoice_number || '').replace(/\D/g, ''), 10) || 0;
-                return numA - numB;
-            });
-
-        const invoiceTotal = sortedInvoices.reduce((s, inv) => s + parseFloat(inv.total || 0), 0);
-
-        const invoiceContent = sortedInvoices.length === 0
-            ? '<p class="detail-empty-msg">No paid invoices found for this employee.</p>'
-            : `<div class="txn-toolbar">
-                <div class="txn-filter-group">
-                    <select id="txn-field" class="txn-field-select">
-                        <option value="all">All columns</option>
-                        <option value="0">Invoice #</option>
-                        <option value="1">Date</option>
-                        <option value="2">Donor</option>
-                        <option value="3">Amount</option>
-                    </select>
-                    <div class="txn-input-wrap">
-                        <svg class="txn-search-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
-                            <circle cx="8.5" cy="8.5" r="5.5"/><path d="M15 15l-3-3"/>
-                        </svg>
-                        <input type="search" id="txn-filter" class="txn-filter-input"
-                               placeholder="Search\u2026" autocomplete="off">
-                    </div>
-                </div>
-                <span id="txn-count" class="txn-count">${sortedInvoices.length} records</span>
-            </div>
-            <div class="detail-table-wrap">
-                <table class="data-table invoices-table">
-                    <thead><tr>
-                        <th>Invoice #</th><th>Date</th><th>Donor</th>
-                        <th class="amount-cell">Amount</th>
-                    </tr></thead>
-                    <tbody>${sortedInvoices.map(inv => `
-                        <tr data-amount="${parseFloat(inv.total || 0)}">
-                            <td>${escHtml(inv.invoice_number || '\u2014')}</td>
-                            <td>${formatDate(inv.date)}</td>
-                            <td>${escHtml(inv.customer_name || '\u2014')}</td>
-                            <td class="amount-cell">${formatCurrency(parseFloat(inv.total || 0))}</td>
-                        </tr>`).join('')}
-                    </tbody>
-                    <tfoot><tr class="total-row">
-                        <td colspan="3">Total</td>
-                        <td class="amount-cell txn-total">${formatCurrency(invoiceTotal)}</td>
-                    </tr></tfoot>
-                </table>
-            </div>`;
 
         // ----- MSR tab -----
         function isMsrField(cf) {
@@ -516,10 +479,13 @@ $(function () {
                     <nav class="detail-tabs">
                         <button class="tab-btn is-active" data-tab="overview">Overview</button>
                         <button class="tab-btn" data-tab="transactions">Transactions
-                            <span class="tab-count">${sortedInvoices.length}</span>
+                            <span class="tab-count" id="txn-tab-count"></span>
                         </button>
                         <button class="tab-btn" data-tab="msr">MSR</button>
                         <button class="tab-btn" data-tab="support">Support</button>
+                        <button class="tab-btn" data-tab="flow">Flow
+                            <span class="tab-count" id="flow-tab-count"></span>
+                        </button>
                     </nav>
                 </div>
 
@@ -535,7 +501,7 @@ $(function () {
                         </div>
                         <div class="ov-kpi-card">
                             <span class="ov-kpi-label">Monthly Avg Income</span>
-                            <span class="ov-kpi-value">${escHtml(formatCurrency(rpt.monthlyAvg))}</span>
+                            <span class="ov-kpi-value" id="ov-monthly-avg">${escHtml(formatCurrency(rpt.monthlyAvg))}</span>
                         </div>
                         <div class="ov-kpi-card">
                             <span class="ov-kpi-label">Avg Deficit</span>
@@ -543,6 +509,7 @@ $(function () {
                         </div>
                     </div>
                     <div class="ov-wrap">${overviewRows}</div>
+                    <div id="ov-attachments" class="ov-attachments-strip"></div>
                     <div class="reports-layout">
 
                         <section class="report-section">
@@ -604,9 +571,7 @@ $(function () {
                     </div>
                 </div>
 
-                <div class="tab-pane is-hidden" id="tab-transactions">
-                    ${invoiceContent}
-                </div>
+                <div class="tab-pane is-hidden" id="tab-transactions"></div>
 
                 <div class="tab-pane is-hidden" id="tab-msr">
                     <div class="msr-layout" data-lc-col-count="${lcColCount}">
@@ -669,36 +634,10 @@ $(function () {
                 </div>
 
                 <div class="tab-pane is-hidden" id="tab-support"></div>
+
+                <div class="tab-pane is-hidden" id="tab-flow"></div>
             </div>
         `);
-
-        // Transactions filter — runs on both input change and field change.
-        function applyTxnFilter() {
-            const q     = $detail.find('#txn-filter').val().trim().toLowerCase();
-            const field = $detail.find('#txn-field').val();   // 'all' | '0' | '1' | '2' | '3'
-            const $rows = $detail.find('.invoices-table tbody tr');
-
-            $rows.each(function () {
-                if (!q) { $(this).show(); return; }
-                const cellText = field === 'all'
-                    ? $(this).text().toLowerCase()
-                    : $(this).find('td').eq(parseInt(field, 10)).text().toLowerCase();
-                $(this).toggle(cellText.includes(q));
-            });
-
-            let filteredTotal = 0;
-            $rows.filter(':visible').each(function () {
-                filteredTotal += parseFloat($(this).data('amount')) || 0;
-            });
-            const visible = $rows.filter(':visible').length;
-            const total   = $rows.length;
-            $detail.find('.txn-total').text(formatCurrency(filteredTotal));
-            $detail.find('#txn-count').text(
-                q ? visible + '\u202fof\u202f' + total + ' records' : total + ' records'
-            );
-        }
-
-        $detail.find('#txn-filter, #txn-field').on('input change', applyTxnFilter);
 
         // ── MSR Edit mode ────────────────────────────────────────────────────
 
@@ -896,14 +835,29 @@ $(function () {
             }
         });
 
-        // Initialise charts immediately — canvases are now in the Overview tab.
+        // Initialise charts with fast stub data — overview is visible immediately.
         initReportCharts(rpt);
 
         // Populate Monthly Pledges and Avg Deficit KPIs in the Overview bar.
         loadOvPledgesTotal(item, rpt.monthlyAvg);
 
-        // Tab switching — load support data lazily on first click.
-        let supportReady = false;
+        // Populate the Overview attachments strip.
+        loadOvAttachments(item.item_id);
+
+        // When accurate per-line-item transactions resolve in the background,
+        // silently re-draw the charts with correct figures.
+        transactionsReq.done(function (txnRes) {
+            if (!document.getElementById('rpt-balance')) return; // user navigated away
+            const transactions = txnRes.data || [];
+            const rptAccurate  = buildReportData(transactions, msrMonthlyRequired);
+            initReportCharts(rptAccurate);
+            $('#ov-monthly-avg').text(formatCurrency(rptAccurate.monthlyAvg));
+        });
+
+        // Tab switching — load transactions, support and flow lazily on first click.
+        let transactionsReady = false;
+        let supportReady      = false;
+        let flowReady         = false;
         $detail.find('.tab-btn').on('click', function () {
             const tab = $(this).data('tab');
             $detail.find('.tab-btn').removeClass('is-active');
@@ -911,9 +865,21 @@ $(function () {
             $detail.find('.tab-pane').addClass('is-hidden');
             $('#tab-' + tab).removeClass('is-hidden');
 
+            if (tab === 'transactions' && !transactionsReady) {
+                transactionsReady = true;
+                const $pane = $('#tab-transactions');
+                $pane.html('<div class="detail-loading"><span class="spinner"></span></div>');
+                transactionsReq
+                    .done(function (txnRes) { renderTransactionsTab($pane, txnRes.data || []); })
+                    .fail(function () { $pane.html('<p class="detail-empty-msg error-msg">Failed to load transactions. Try refreshing.</p>'); });
+            }
             if (tab === 'support' && !supportReady) {
                 supportReady = true;
                 renderSupportTab($('#tab-support'), item, msrMonthlyRequired);
+            }
+            if (tab === 'flow' && !flowReady) {
+                flowReady = true;
+                renderFlowTab($('#tab-flow'), item);
             }
         });
     }
@@ -1018,10 +984,90 @@ $(function () {
         return amt;
     }
 
+    function renderTransactionsTab($pane, transactions) {
+        const rows_data = transactions || [];
+
+        if (rows_data.length === 0) {
+            $('#txn-tab-count').text('0');
+            $pane.html('<p class="detail-empty-msg">No paid invoices found for this employee in the last 12 months.</p>');
+            return;
+        }
+
+        const total = rows_data.reduce((s, inv) => s + (inv.total || 0), 0);
+        $('#txn-tab-count').text(rows_data.length);
+
+        const rows = rows_data.map(inv => `<tr data-amount="${inv.total}">
+            <td>${formatDate(inv.date)}</td>
+            <td>${escHtml(inv.invoice_number || '—')}</td>
+            <td>${escHtml(inv.customer_name || '—')}</td>
+            <td class="amount-cell">${parseFloat(inv.quantity || 1).toFixed(2)}</td>
+            <td class="amount-cell">${formatCurrency(inv.price || 0)}</td>
+            <td class="amount-cell">${formatCurrency(inv.total || 0)}</td>
+        </tr>`).join('');
+
+        $pane.html(`
+            <div class="txn-toolbar">
+                <div class="txn-filter-group">
+                    <select id="txn-field" class="txn-field-select">
+                        <option value="all">All columns</option>
+                        <option value="0">Date</option>
+                        <option value="1">Invoice #</option>
+                        <option value="2">Customer</option>
+                    </select>
+                    <div class="txn-input-wrap">
+                        <svg class="txn-search-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <circle cx="8.5" cy="8.5" r="5.5"/><path d="M15 15l-3-3"/>
+                        </svg>
+                        <input type="search" id="txn-filter" class="txn-filter-input"
+                               placeholder="Search…" autocomplete="off">
+                    </div>
+                </div>
+                <span id="txn-count" class="txn-count">${rows_data.length} records</span>
+            </div>
+            <div class="detail-table-wrap">
+                <table class="data-table invoices-table">
+                    <thead><tr>
+                        <th>Date</th>
+                        <th>Invoice #</th>
+                        <th>Customer Name</th>
+                        <th class="amount-cell">Quantity Sold</th>
+                        <th class="amount-cell">Price</th>
+                        <th class="amount-cell">Total</th>
+                    </tr></thead>
+                    <tbody>${rows}</tbody>
+                    <tfoot><tr class="total-row">
+                        <td colspan="5">Total</td>
+                        <td class="amount-cell txn-total">${formatCurrency(total)}</td>
+                    </tr></tfoot>
+                </table>
+            </div>
+        `);
+
+        function applyTxnFilter() {
+            const q     = $pane.find('#txn-filter').val().trim().toLowerCase();
+            const field = $pane.find('#txn-field').val();
+            const $rows = $pane.find('.invoices-table tbody tr');
+            $rows.each(function () {
+                if (!q) { $(this).show(); return; }
+                const cellText = field === 'all'
+                    ? $(this).text().toLowerCase()
+                    : $(this).find('td').eq(parseInt(field, 10)).text().toLowerCase();
+                $(this).toggle(cellText.includes(q));
+            });
+            let filteredTotal = 0;
+            $rows.filter(':visible').each(function () { filteredTotal += parseFloat($(this).data('amount')) || 0; });
+            const visible = $rows.filter(':visible').length;
+            const total   = $rows.length;
+            $pane.find('.txn-total').text(formatCurrency(filteredTotal));
+            $pane.find('#txn-count').text(q ? visible + ' of ' + total + ' records' : total + ' records');
+        }
+        $pane.find('#txn-filter, #txn-field').on('input change', applyTxnFilter);
+    }
+
     function loadOvPledgesTotal(item, monthlyAvg) {
         const $pledges = $('#ov-pledges-total');
         const $deficit = $('#ov-avg-deficit');
-        $.getJSON(PROXY + '?endpoint=books_recurring_all')
+        getRecurringAll()
             .done(function (res) {
                 const matched = (res.data || []).filter(ri => supportMatch(item.name, ri.recurrence_name));
                 if (matched.length === 0) {
@@ -1067,7 +1113,7 @@ $(function () {
     function renderSupportTab($pane, item, msrMonthly) {
         $pane.html('<div class="detail-loading"><span class="spinner"></span></div>');
 
-        $.getJSON(PROXY + '?endpoint=books_recurring_all')
+        getRecurringAll()
             .done(function (res) {
                 const all = res.data || [];
 
@@ -1170,6 +1216,191 @@ $(function () {
             })
             .fail(function () {
                 $pane.html('<p class="detail-empty-msg error-msg">Failed to load support data. Try refreshing.</p>');
+            });
+    }
+
+    // -------------------------------------------------------------------------
+    // Flow tab — file uploads and attachment display
+    // -------------------------------------------------------------------------
+
+    const ATTACHMENTS_URL = '/oms-zoho-dashboard/zoho-dashboard/api/attachments.php';
+    const UPLOAD_URL      = '/oms-zoho-dashboard/zoho-dashboard/api/upload.php';
+    const DELETE_ATT_URL  = '/oms-zoho-dashboard/zoho-dashboard/api/delete_attachment.php';
+    const UPLOADS_BASE    = '/oms-zoho-dashboard/zoho-dashboard/uploads/';
+
+    function attFileUrl(itemId, fileId) {
+        return UPLOADS_BASE + encodeURIComponent(itemId) + '/' + encodeURIComponent(fileId);
+    }
+
+    function attIcon(mime) {
+        if (mime.startsWith('image/'))          return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="flow-file-icon"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';
+        if (mime === 'application/pdf')         return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="flow-file-icon"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h4"/></svg>';
+        return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="flow-file-icon"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>';
+    }
+
+    function attFormatSize(bytes) {
+        return bytes < 1024 * 1024
+            ? (bytes / 1024).toFixed(1) + ' KB'
+            : (bytes / 1024 / 1024).toFixed(1) + ' MB';
+    }
+
+    function renderFlowTab($pane, item) {
+        $pane.html(`
+            <div class="flow-upload-zone" id="flow-dropzone">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="flow-zone-icon">
+                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                    <polyline points="17 8 12 3 7 8"/>
+                    <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <p class="flow-zone-label">Drop files here or
+                    <label for="flow-file-input" class="flow-zone-link">click to upload</label>
+                </p>
+                <p class="flow-zone-hint">Images, PDF, Word, Excel &bull; Max 10 MB each</p>
+                <input type="file" id="flow-file-input" multiple
+                       accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
+                       style="display:none">
+            </div>
+            <div class="flow-progress" id="flow-progress" style="display:none"></div>
+            <div class="flow-list" id="flow-list">
+                <div class="detail-loading"><span class="spinner"></span></div>
+            </div>
+        `);
+
+        function fetchAndRenderAttachments(refreshOvStrip) {
+            $.getJSON(ATTACHMENTS_URL + '?item_id=' + encodeURIComponent(item.item_id))
+                .done(function (res) {
+                    renderFlowList(res.attachments || []);
+                    if (refreshOvStrip) loadOvAttachments(item.item_id);
+                })
+                .fail(function () {
+                    $pane.find('#flow-list').html('<p class="flow-empty error-msg">Failed to load attachments.</p>');
+                });
+        }
+
+        function renderFlowList(files) {
+            const $list = $pane.find('#flow-list');
+            $('#flow-tab-count').text(files.length || '');
+            if (!files.length) {
+                $list.html('<p class="flow-empty">No files uploaded yet.</p>');
+                return;
+            }
+            $list.html(files.map(f => {
+                const url      = attFileUrl(item.item_id, f.id);
+                const isImage  = f.mime.startsWith('image/');
+                const preview  = isImage
+                    ? `<img src="${escAttr(url)}" class="flow-thumb" alt="${escAttr(f.original_name)}" loading="lazy">`
+                    : `<div class="flow-icon-wrap">${attIcon(f.mime)}</div>`;
+                return `<div class="flow-card" data-id="${escAttr(f.id)}">
+                    <a href="${escAttr(url)}" target="_blank" class="flow-preview">${preview}</a>
+                    <div class="flow-info">
+                        <span class="flow-name" title="${escAttr(f.original_name)}">${escHtml(f.original_name)}</span>
+                        <span class="flow-meta">${escHtml(formatDate(f.uploaded_at.slice(0, 10)))} &bull; ${escHtml(attFormatSize(f.size))}</span>
+                    </div>
+                    <button class="flow-del-btn" data-id="${escAttr(f.id)}" title="Delete">&times;</button>
+                </div>`;
+            }).join(''));
+        }
+
+        function uploadFiles(fileList) {
+            const files = Array.from(fileList);
+            if (!files.length) return;
+            const $prog = $pane.find('#flow-progress').show().html('');
+            let pending = files.length;
+
+            files.forEach(function (file) {
+                const $row = $(`<div class="flow-prog-row">
+                    <span class="flow-prog-name">${escHtml(file.name)}</span>
+                    <span class="flow-prog-status">Uploading…</span>
+                </div>`);
+                $prog.append($row);
+
+                const fd = new FormData();
+                fd.append('item_id', item.item_id);
+                fd.append('file', file);
+
+                $.ajax({ url: UPLOAD_URL, type: 'POST', data: fd, processData: false, contentType: false })
+                    .done(function (res) {
+                        if (res.success) {
+                            $row.find('.flow-prog-status').text('Done').addClass('flow-prog-ok');
+                        } else {
+                            $row.find('.flow-prog-status').text(res.error || 'Failed').addClass('flow-prog-err');
+                        }
+                    })
+                    .fail(function () {
+                        $row.find('.flow-prog-status').text('Failed').addClass('flow-prog-err');
+                    })
+                    .always(function () {
+                        if (--pending === 0) {
+                            setTimeout(function () {
+                                $prog.hide().html('');
+                                fetchAndRenderAttachments(true);
+                            }, 1200);
+                        }
+                    });
+            });
+        }
+
+        fetchAndRenderAttachments(false);
+
+        // File input change
+        $pane.on('change', '#flow-file-input', function () {
+            uploadFiles(this.files);
+            this.value = '';
+        });
+
+        // Drag & drop
+        const $zone = $pane.find('#flow-dropzone');
+        $zone.on('dragover dragenter', function (e) {
+            e.preventDefault();
+            $(this).addClass('flow-drop-active');
+        }).on('dragleave drop', function (e) {
+            e.preventDefault();
+            $(this).removeClass('flow-drop-active');
+            if (e.type === 'drop') uploadFiles(e.originalEvent.dataTransfer.files);
+        });
+
+        // Delete
+        $pane.on('click', '.flow-del-btn', function () {
+            const fileId = $(this).data('id');
+            if (!confirm('Delete this attachment?')) return;
+            $.ajax({
+                url:         DELETE_ATT_URL,
+                type:        'POST',
+                contentType: 'application/json',
+                data:        JSON.stringify({ item_id: item.item_id, file_id: fileId }),
+            })
+            .done(function () { fetchAndRenderAttachments(true); })
+            .fail(function () { alert('Failed to delete. Please try again.'); });
+        });
+    }
+
+    function loadOvAttachments(itemId) {
+        const $strip = $('#ov-attachments');
+        if (!$strip.length) return;
+        $.getJSON(ATTACHMENTS_URL + '?item_id=' + encodeURIComponent(itemId))
+            .done(function (res) {
+                const files = (res.attachments || []).slice(0, 8);
+                if (!files.length) { $strip.empty(); return; }
+                const items = files.map(function (f) {
+                    const url     = attFileUrl(itemId, f.id);
+                    const isImage = f.mime.startsWith('image/');
+                    if (isImage) {
+                        return `<a href="${escAttr(url)}" target="_blank" class="ov-att-thumb">
+                            <img src="${escAttr(url)}" alt="${escAttr(f.original_name)}" loading="lazy">
+                        </a>`;
+                    }
+                    return `<a href="${escAttr(url)}" target="_blank" class="ov-att-file" title="${escAttr(f.original_name)}">
+                        ${attIcon(f.mime)}
+                        <span>${escHtml(f.original_name.length > 22 ? f.original_name.slice(0, 20) + '…' : f.original_name)}</span>
+                    </a>`;
+                }).join('');
+                $strip.html(`
+                    <div class="ov-att-header">
+                        <span class="ov-att-title">Attachments</span>
+                        <span class="ov-att-count">${files.length}</span>
+                    </div>
+                    <div class="ov-att-grid">${items}</div>
+                `);
             });
     }
 

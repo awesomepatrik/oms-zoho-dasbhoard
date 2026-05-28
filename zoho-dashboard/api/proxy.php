@@ -40,13 +40,65 @@ const ENDPOINTS = [
     'books_invoice_index'        => ['fn' => 'books_getInvoiceIndex'],
     'books_items_pm_map'         => ['fn' => 'books_getItemsPmMap'],
     'books_contacts'             => ['fn' => 'books_getContacts'],
-    'books_invoices_by_item'     => ['fn' => 'books_getInvoicesByItem',   'param' => 'item_id'],
+    'books_invoices_by_item'      => ['fn' => 'books_getInvoicesByItem',      'param' => 'item_id'],
+    'books_invoice_detail'        => ['fn' => 'books_getInvoiceDetail',       'param' => 'invoice_id'],
+    'books_invoice_transactions'  => ['fn' => 'books_getInvoiceTransactions', 'param' => 'item_id'],
     'books_recurring_by_item'    => ['fn' => 'books_getRecurringByItem',   'param' => 'item_id'],
     'books_recurring_detail'     => ['fn' => 'books_getRecurringDetail',  'param' => 'recurring_invoice_id'],
     'crm_contacts'               => ['fn' => 'crm_getContacts'],
     'crm_employees'              => ['fn' => 'crm_getEmployees'],
     'crm_accounts'               => ['fn' => 'crm_getAccounts'],
 ];
+
+// ---------------------------------------------------------------------------
+// Special: item image proxy (returns raw image, not JSON)
+// ---------------------------------------------------------------------------
+
+if (($_GET['endpoint'] ?? '') === 'books_item_image') {
+    $itemId = preg_replace('/[^a-zA-Z0-9_\-]/', '', $_GET['item_id'] ?? '');
+    if ($itemId === '') { http_response_code(400); exit; }
+
+    try {
+        $oauth = new ZohoOAuth();
+        $token = $oauth->getValidToken();
+        $cfg   = get_config();
+        $url   = rtrim($cfg['books_api_base'], '/') . '/items/' . rawurlencode($itemId) . '/image'
+               . '?' . http_build_query(['organization_id' => $cfg['books_org_id']]);
+
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT        => 15,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_HEADER         => true,
+            CURLOPT_HTTPHEADER     => ['Authorization: Zoho-oauthtoken ' . $token],
+        ]);
+        $response  = curl_exec($ch);
+        $httpCode  = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
+        curl_close($ch);
+
+        if ($httpCode !== 200) { http_response_code(404); exit; }
+
+        $rawHeaders = substr($response, 0, $headerSize);
+        $body       = substr($response, $headerSize);
+
+        $contentType = 'image/jpeg';
+        foreach (explode("\r\n", $rawHeaders) as $hLine) {
+            if (stripos($hLine, 'content-type:') === 0) {
+                $contentType = trim(substr($hLine, 13));
+                break;
+            }
+        }
+
+        header('Content-Type: ' . $contentType);
+        header('Cache-Control: public, max-age=3600');
+        echo $body;
+    } catch (Throwable $e) {
+        http_response_code(500);
+    }
+    exit;
+}
 
 // ---------------------------------------------------------------------------
 // Validate request
