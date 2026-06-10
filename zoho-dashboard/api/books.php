@@ -396,13 +396,16 @@ function books_buildInvoiceIndex(string $token): array
 
     $index = [];
 
-    foreach (array_chunk($list, 10) as $batch) {
+    foreach (array_chunk($list, 3) as $batchIndex => $batch) {
+        // Pause between batches — 3 invoices × 5s ≈ 18 req/min, well under rate limit.
+        if ($batchIndex > 0) sleep(5);
+
         $pending = $batch;
 
-        // Retry loop: re-send any invoice that returns 429.
+        // Retry loop: re-send any invoice that returns 429 or code 44.
         for ($attempt = 0; $attempt < 3 && !empty($pending); $attempt++) {
             if ($attempt > 0) {
-                sleep(6); // back-off before retry
+                sleep(15); // longer back-off before retry
             }
 
             $mh      = curl_multi_init();
@@ -449,6 +452,11 @@ function books_buildInvoiceIndex(string $token): array
                 if ($httpCode !== 200) continue;
 
                 $decoded = json_decode($body, true);
+                // Code 44 = org rate block — retry this invoice.
+                if (isset($decoded['code']) && (int)$decoded['code'] === 44) {
+                    $pending[] = $stub;
+                    continue;
+                }
                 if (!isset($decoded['invoice']['line_items'])) continue;
 
                 $inv = $decoded['invoice'];
@@ -491,12 +499,23 @@ function books_buildInvoiceIndex(string $token): array
 }
 
 /**
- * Build and return the global invoice index on every call (no cache).
- * Used by books_getInvoicesByItem and books_getItemInvoiceStatus.
+ * Return the global invoice index, building and caching it on first call.
+ * A file lock prevents concurrent builds from doubling the API load on Zoho.
+ * ignore_user_abort keeps the build running even when the browser disconnects.
  */
 function books_getInvoiceIndex(string $token): array
 {
-    return books_buildInvoiceIndex($token);
+    require_once __DIR__ . '/../lib/ApiCache.php';
+    $cache = new ApiCache('books_invoice_index');
+
+    // Web requests only serve from cache — never auto-build.
+    // Building the index requires ~1 API call per invoice and will exhaust the
+    // daily 10,000-call quota. Run warm_invoice_index.php from the CLI instead.
+    if ($cache->isValid(14400)) {
+        return $cache->read();
+    }
+
+    return [];
 }
 
 /**
@@ -514,82 +533,188 @@ function books_getInvoicesByItem(string $token, string $itemId): array
 /**
  * Return paid invoice transactions for a specific item over the last 12 months.
  *
- * Fetches the paid invoice list filtered by item_id and date, then fetches each
- * invoice detail server-side to extract the correct per-line-item qty, price, and
- * total. Only invoices that actually contain a matching line_item are returned.
+ * Uses two sources, tried in order:
+ *
+ * 1. Invoice index cache (built via warm_invoice_index.php CLI) — covers both
+ *    linked and free-text line items. Costs 0 extra API calls when warm.
+ *
+ * 2. Direct item_id filter — 2-5 API calls. Works for items that have a Zoho
+ *    item_id set. Returns empty for free-text items (no item_id filter exists
+ *    in the Zoho Books API for line item names).
+ *
+ * The index is never auto-built here — run warm_invoice_index.php from the CLI.
  */
 function books_getInvoiceTransactions(string $token, string $itemId): array
 {
-    $cfg     = get_config();
-    $orgId   = $cfg['books_org_id'];
-    $baseUrl = rtrim($cfg['books_api_base'], '/');
-
+    $cfg      = get_config();
+    $orgId    = $cfg['books_org_id'];
+    $baseUrl  = rtrim($cfg['books_api_base'], '/');
     $dateFrom = date('Y-m-d', strtotime('-12 months'));
 
-    $list = books_paginate($token, '/invoices', 'invoices', [
-        'filter_by'  => 'Status.Paid',
-        'item_id'    => $itemId,
-        'date_start' => $dateFrom,
-        'per_page'   => 200,
-    ]);
+    require_once __DIR__ . '/../lib/ApiCache.php';
 
-    if (empty($list)) return [];
+    // Resolve item name for scored line-item matching (used when index is warm).
+    $itemCache = new ApiCache('books_item_detail_' . $itemId);
+    $itemData  = $itemCache->isValid(3600) ? $itemCache->read() : [];
+    if (empty($itemData)) {
+        try { $itemData = books_getItemDetail($token, $itemId); } catch (RuntimeException $e) {}
+    }
+    $normName = books_normalise_name($itemData['name'] ?? '');
+    $tokens   = books_name_tokens($itemData['name'] ?? '');
 
-    // Fetch all invoice details in one parallel curl_multi pass.
-    // Filtered list is per-employee over 12 months (typically 12-52 invoices),
-    // so one batch is safe within Zoho's rate limit.
-    $result  = [];
-    $pending = array_values(array_filter($list, fn($s) => ($s['invoice_id'] ?? '') !== ''));
+    $invoiceIds = [];
 
-    for ($attempt = 0; $attempt < 3 && !empty($pending); $attempt++) {
-        if ($attempt > 0) sleep(6);
-
-        $mh      = curl_multi_init();
-        $handles = [];
-
-        foreach ($pending as $stub) {
-            $ch = curl_init(
-                "{$baseUrl}/invoices/" . rawurlencode($stub['invoice_id'])
-                . '?' . http_build_query(['organization_id' => $orgId])
-            );
-            curl_setopt_array($ch, [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_TIMEOUT        => 20,
-                CURLOPT_SSL_VERIFYPEER => true,
-                CURLOPT_HTTPHEADER     => [
-                    'Authorization: Zoho-oauthtoken ' . $token,
-                    'Accept: application/json',
-                ],
-            ]);
-            curl_multi_add_handle($mh, $ch);
-            $handles[spl_object_id($ch)] = ['ch' => $ch, 'stub' => $stub];
+    // --- Source 1: invoice index (warm cache, zero extra API calls) ---
+    $indexCache = new ApiCache('books_invoice_index');
+    if ($indexCache->isValid(14400)) {
+        $index = $indexCache->read();
+        $seen  = [];
+        foreach (array_filter([
+            $itemId,
+            $normName !== '' ? 'name:' . $normName : '',
+            $tokens   !== '' ? 'tokens:' . $tokens  : '',
+        ]) as $key) {
+            foreach ($index[$key] ?? [] as $rec) {
+                $id = $rec['invoice_id'] ?? '';
+                if ($id !== '' && !isset($seen[$id]) && ($rec['date'] ?? '') >= $dateFrom) {
+                    $invoiceIds[] = $id;
+                    $seen[$id]    = true;
+                }
+            }
         }
+    }
 
-        do {
-            curl_multi_exec($mh, $running);
-            curl_multi_select($mh);
-        } while ($running > 0);
+    // --- Source 2: item_id filter (2-5 API calls, linked items only) ---
+    if (empty($invoiceIds)) {
+        $list = books_paginate($token, '/invoices', 'invoices', [
+            'filter_by'  => 'Status.Paid',
+            'item_id'    => $itemId,
+            'date_start' => $dateFrom,
+            'per_page'   => 200,
+        ]);
+        foreach ($list as $stub) {
+            $id = $stub['invoice_id'] ?? '';
+            if ($id !== '') $invoiceIds[] = $id;
+        }
+    }
 
-        $pending = [];
+    if (empty($invoiceIds)) return [];
 
-        foreach ($handles as ['ch' => $ch, 'stub' => $stub]) {
-            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            $body     = curl_multi_getcontent($ch);
-            curl_multi_remove_handle($mh, $ch);
+    $result = [];
 
-            if ($httpCode === 429) {
-                $pending[] = $stub;
+    // --- Serve already-cached invoice details without an API call ---
+    // Shares the same cache key as the books_invoice_detail endpoint (1-hour TTL).
+    $toFetch = [];
+    foreach (array_unique($invoiceIds) as $invoiceId) {
+        $detailCache = new ApiCache("books_invoice_detail_{$invoiceId}");
+        if ($detailCache->isValid(3600)) {
+            $inv = $detailCache->read();
+            if (!empty($inv)) {
+                $bestScore = 0;
+                $bestLi    = null;
+                foreach ($inv['line_items'] ?? [] as $li) {
+                    $score = books_matchLineItem($li, $itemId, $normName, $tokens);
+                    if ($score > $bestScore) {
+                        $bestScore = $score;
+                        $bestLi    = $li;
+                        if ($score === 4) break;
+                    }
+                }
+                if ($bestLi !== null && $bestScore > 0) {
+                    $result[] = [
+                        'invoice_id'     => $inv['invoice_id']     ?? '',
+                        'invoice_number' => $inv['invoice_number'] ?? '',
+                        'date'           => $inv['date']           ?? '',
+                        'customer_name'  => $inv['customer_name']  ?? '',
+                        'status'         => $inv['status']         ?? '',
+                        'quantity'       => (float)($bestLi['quantity']  ?? 1),
+                        'price'          => (float)($bestLi['rate']       ?? 0),
+                        'total'          => (float)($bestLi['item_total'] ?? $bestLi['rate'] ?? 0),
+                    ];
+                }
                 continue;
             }
+        }
+        $toFetch[] = $invoiceId;
+    }
 
-            if ($httpCode !== 200) continue;
+    // --- Fetch details in batches of 5 (safe under Zoho's rate limit) ---
+    $dailyQuotaHit = false;
+    foreach (array_chunk($toFetch, 5) as $chunkIdx => $chunk) {
+        if ($dailyQuotaHit) break;
+        if ($chunkIdx > 0) sleep(1); // brief pause between batches
 
-            $decoded = json_decode($body, true);
-            $inv     = $decoded['invoice'] ?? [];
-            if (empty($inv)) continue;
+        $pending = array_values($chunk);
 
-            foreach ($inv['line_items'] ?? [] as $li) {
-                if ((string)($li['item_id'] ?? '') !== (string)$itemId) continue;
+        for ($attempt = 0; $attempt < 2 && !empty($pending) && !$dailyQuotaHit; $attempt++) {
+            if ($attempt > 0) sleep(10);
+
+            $mh      = curl_multi_init();
+            $handles = [];
+
+            foreach ($pending as $invoiceId) {
+                $ch = curl_init(
+                    "{$baseUrl}/invoices/" . rawurlencode($invoiceId)
+                    . '?' . http_build_query(['organization_id' => $orgId])
+                );
+                curl_setopt_array($ch, [
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_TIMEOUT        => 20,
+                    CURLOPT_SSL_VERIFYPEER => true,
+                    CURLOPT_HTTPHEADER     => [
+                        'Authorization: Zoho-oauthtoken ' . $token,
+                        'Accept: application/json',
+                    ],
+                ]);
+                curl_multi_add_handle($mh, $ch);
+                $handles[spl_object_id($ch)] = ['ch' => $ch, 'invoice_id' => $invoiceId];
+            }
+
+            do { curl_multi_exec($mh, $running); curl_multi_select($mh); } while ($running > 0);
+
+            $pending = [];
+
+            foreach ($handles as ['ch' => $ch, 'invoice_id' => $invoiceId]) {
+                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                $body     = curl_multi_getcontent($ch);
+                curl_multi_remove_handle($mh, $ch);
+
+                if ($httpCode === 429) {
+                    $bodyJson = json_decode($body, true);
+                    if (isset($bodyJson['code']) && (int)$bodyJson['code'] === 45) {
+                        $dailyQuotaHit = true; // daily limit — stop all fetching
+                    } else {
+                        $pending[] = $invoiceId; // transient throttle — retry
+                    }
+                    continue;
+                }
+                if ($httpCode !== 200) continue;
+
+                $decoded = json_decode($body, true);
+                // Code 44 = org rate block — queue for retry.
+                if (isset($decoded['code']) && (int)$decoded['code'] === 44) {
+                    $pending[] = $invoiceId;
+                    continue;
+                }
+
+                $inv = $decoded['invoice'] ?? [];
+                if (empty($inv)) continue;
+
+                // Cache this invoice detail so future lookups (same or other employees) skip the API call.
+                (new ApiCache("books_invoice_detail_{$invoiceId}"))->write($inv);
+
+                $bestScore = 0;
+                $bestLi    = null;
+                foreach ($inv['line_items'] ?? [] as $li) {
+                    $score = books_matchLineItem($li, $itemId, $normName, $tokens);
+                    if ($score > $bestScore) {
+                        $bestScore = $score;
+                        $bestLi    = $li;
+                        if ($score === 4) break;
+                    }
+                }
+
+                if ($bestLi === null || $bestScore === 0) continue;
 
                 $result[] = [
                     'invoice_id'     => $inv['invoice_id']     ?? '',
@@ -597,21 +722,52 @@ function books_getInvoiceTransactions(string $token, string $itemId): array
                     'date'           => $inv['date']           ?? '',
                     'customer_name'  => $inv['customer_name']  ?? '',
                     'status'         => $inv['status']         ?? '',
-                    'quantity'       => (float)($li['quantity']   ?? 1),
-                    'price'          => (float)($li['rate']        ?? 0),
-                    'total'          => (float)($li['item_total']  ?? $li['rate'] ?? 0),
+                    'quantity'       => (float)($bestLi['quantity']  ?? 1),
+                    'price'          => (float)($bestLi['rate']       ?? 0),
+                    'total'          => (float)($bestLi['item_total'] ?? $bestLi['rate'] ?? 0),
                 ];
-                break;
             }
-        }
 
-        curl_multi_close($mh);
+            curl_multi_close($mh);
+        }
     }
 
-    // Sort newest first.
     usort($result, fn($a, $b) => strcmp($b['date'], $a['date']));
-
     return $result;
+}
+
+/**
+ * Score how well a line item matches a target item.
+ *
+ * 4 = exact item_id match (definitive)
+ * 3 = exact normalised name match
+ * 2 = all sorted-word tokens match (word-order insensitive)
+ * 1 = majority token overlap (handles partial name variations)
+ * 0 = no match
+ */
+function books_matchLineItem(array $li, string $itemId, string $normName, string $tokens): int
+{
+    if ($itemId !== '' && (string)($li['item_id'] ?? '') === $itemId) {
+        return 4;
+    }
+    $liNorm = books_normalise_name($li['name'] ?? '');
+    if ($normName !== '' && $liNorm === $normName) {
+        return 3;
+    }
+    $liTokens = books_name_tokens($li['name'] ?? '');
+    if ($tokens !== '' && $liTokens !== '' && $liTokens === $tokens) {
+        return 2;
+    }
+    if ($tokens !== '' && $liTokens !== '') {
+        $tArr    = explode('|', $tokens);
+        $liArr   = explode('|', $liTokens);
+        $overlap = count(array_intersect($tArr, $liArr));
+        $minLen  = min(count($tArr), count($liArr));
+        if ($minLen > 0 && $overlap >= (int)ceil($minLen / 2)) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 function books_getInvoiceDetail(string $token, string $invoiceId): array
@@ -788,15 +944,29 @@ function books_get(string $token, string $url): array
             throw new RuntimeException("Books API cURL error: {$curlErr}");
         }
 
-        if ($httpCode === 429 && $attempt < 4) {
-            // Rate limited — back off with increasing delays (10s, 20s, 40s, 60s).
-            $delays = [10, 20, 40, 60];
-            $wait   = $delays[$attempt];
-            $attemptNum = $attempt + 1;
-            error_log("Books API 429 rate limit for URL: {$url} — retrying after {$wait} s (attempt {$attemptNum})");
-            sleep($wait);
-            $attempt++;
-            continue;
+        if ($httpCode === 429) {
+            // Read the body to distinguish per-minute throttle from daily quota exhaustion.
+            $bodyPreview = substr($body, 0, 300);
+            $bodyJson    = json_decode($body, true);
+            $zohoCode    = isset($bodyJson['code']) ? (int)$bodyJson['code'] : 0;
+
+            // Code 45 = daily 10,000-call quota exhausted. No point retrying.
+            if ($zohoCode === 45) {
+                error_log("Books API code 45 (daily quota exhausted) for URL: {$url} — failing immediately.");
+                throw new RuntimeException("Books API daily call quota exhausted (code 45). Try again tomorrow.");
+            }
+
+            // Transient per-minute throttle — retry twice with short back-off.
+            if ($attempt < 2) {
+                $wait = $attempt === 0 ? 10 : 20;
+                error_log("Books API 429 for URL: {$url} — retrying after {$wait}s (attempt " . ($attempt + 1) . ")");
+                sleep($wait);
+                $attempt++;
+                continue;
+            }
+
+            error_log("Books API HTTP 429 for URL: {$url} — Body: {$bodyPreview}");
+            throw new RuntimeException("Books API returned HTTP 429.");
         }
 
         if ($httpCode !== 200) {
@@ -807,6 +977,14 @@ function books_get(string $token, string $url): array
         $decoded = json_decode($body, true);
         if (!is_array($decoded)) {
             throw new RuntimeException('Books API returned non-JSON response.');
+        }
+
+        // Code 44 = org-level per-minute rate block. One short retry for user-facing calls.
+        if (isset($decoded['code']) && (int)$decoded['code'] === 44 && $attempt < 1) {
+            error_log("Books API code 44 (org rate limit) for URL: {$url} — retrying after 10s (attempt " . ($attempt + 1) . ")");
+            sleep(10);
+            $attempt++;
+            continue;
         }
 
         if (isset($decoded['code']) && $decoded['code'] !== 0) {

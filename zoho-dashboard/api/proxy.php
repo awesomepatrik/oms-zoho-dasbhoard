@@ -2,7 +2,8 @@
 /**
  * Central API proxy — the only endpoint the browser calls.
  *
- * Every request goes directly to the Zoho API with no caching.
+ * Responses are served from a flat-file cache when a TTL is set for the
+ * endpoint; otherwise every request goes directly to the Zoho API.
  *
  * Usage:
  *   GET proxy.php?endpoint=<key>
@@ -18,6 +19,7 @@
 
 require_once __DIR__ . '/../lib/helpers.php';
 require_once __DIR__ . '/../lib/ZohoOAuth.php';
+require_once __DIR__ . '/../lib/ApiCache.php';
 require_once __DIR__ . '/books.php';
 require_once __DIR__ . '/crm.php';
 
@@ -25,26 +27,27 @@ require_once __DIR__ . '/crm.php';
 // Endpoint whitelist
 // Standard:      'key' => ['fn' => '<function>']
 // Parameterised: add   'param' => '<GET key>'
+// Cached:        add   'ttl'   => <seconds>
 // ---------------------------------------------------------------------------
 const ENDPOINTS = [
     'books_invoices'             => ['fn' => 'books_getInvoices'],
-    'books_recurring'            => ['fn' => 'books_getRecurringInvoices'],
-    'books_recurring_all'        => ['fn' => 'books_getAllRecurringInvoices'],
+    'books_recurring'            => ['fn' => 'books_getRecurringInvoices',   'ttl' => 1800],
+    'books_recurring_all'        => ['fn' => 'books_getAllRecurringInvoices', 'ttl' => 1800],
     'books_accounts'             => ['fn' => 'books_getAccounts'],
-    'books_items'                => ['fn' => 'books_getItems'],
-    'books_item_detail'          => ['fn' => 'books_getItemDetail',       'param' => 'item_id'],
-    'books_item_customfields'    => ['fn' => 'books_getItemCustomFields'],
-    'books_contact_detail'       => ['fn' => 'books_getContactDetail',    'param' => 'contact_id'],
-    'books_employee_contact'     => ['fn' => 'books_getEmployeeContact',  'param' => 'item_id'],
+    'books_items'                => ['fn' => 'books_getItems',               'ttl' => 3600],
+    'books_item_detail'          => ['fn' => 'books_getItemDetail',          'param' => 'item_id',             'ttl' => 3600],
+    'books_item_customfields'    => ['fn' => 'books_getItemCustomFields',                                      'ttl' => 14400],
+    'books_contact_detail'       => ['fn' => 'books_getContactDetail',       'param' => 'contact_id',          'ttl' => 3600],
+    'books_employee_contact'     => ['fn' => 'books_getEmployeeContact',     'param' => 'item_id',             'ttl' => 3600],
     'books_item_invoice_status'  => ['fn' => 'books_getItemInvoiceStatus'],
-    'books_invoice_index'        => ['fn' => 'books_getInvoiceIndex'],
+    'books_invoice_index'        => ['fn' => 'books_getInvoiceIndex',                                         'ttl' => 14400],
     'books_items_pm_map'         => ['fn' => 'books_getItemsPmMap'],
     'books_contacts'             => ['fn' => 'books_getContacts'],
-    'books_invoices_by_item'      => ['fn' => 'books_getInvoicesByItem',      'param' => 'item_id'],
-    'books_invoice_detail'        => ['fn' => 'books_getInvoiceDetail',       'param' => 'invoice_id'],
-    'books_invoice_transactions'  => ['fn' => 'books_getInvoiceTransactions', 'param' => 'item_id'],
-    'books_recurring_by_item'    => ['fn' => 'books_getRecurringByItem',   'param' => 'item_id'],
-    'books_recurring_detail'     => ['fn' => 'books_getRecurringDetail',  'param' => 'recurring_invoice_id'],
+    'books_invoices_by_item'     => ['fn' => 'books_getInvoicesByItem',      'param' => 'item_id',             'ttl' => 1800],
+    'books_invoice_detail'       => ['fn' => 'books_getInvoiceDetail',       'param' => 'invoice_id',          'ttl' => 3600],
+    'books_invoice_transactions' => ['fn' => 'books_getInvoiceTransactions', 'param' => 'item_id',             'ttl' => 3600],
+    'books_recurring_by_item'    => ['fn' => 'books_getRecurringByItem',     'param' => 'item_id',             'ttl' => 1800],
+    'books_recurring_detail'     => ['fn' => 'books_getRecurringDetail',     'param' => 'recurring_invoice_id','ttl' => 1800],
     'crm_contacts'               => ['fn' => 'crm_getContacts'],
     'crm_employees'              => ['fn' => 'crm_getEmployees'],
     'crm_accounts'               => ['fn' => 'crm_getAccounts'],
@@ -60,7 +63,7 @@ if (($_GET['endpoint'] ?? '') === 'books_item_image') {
 
     try {
         $oauth = new ZohoOAuth();
-        $token = $oauth->getValidToken();
+        $token = $oauth->getValidAccessToken();
         $cfg   = get_config();
         $url   = rtrim($cfg['books_api_base'], '/') . '/items/' . rawurlencode($itemId) . '/image'
                . '?' . http_build_query(['organization_id' => $cfg['books_org_id']]);
@@ -73,16 +76,64 @@ if (($_GET['endpoint'] ?? '') === 'books_item_image') {
             CURLOPT_HEADER         => true,
             CURLOPT_HTTPHEADER     => ['Authorization: Zoho-oauthtoken ' . $token],
         ]);
-        $response  = curl_exec($ch);
-        $httpCode  = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $response   = curl_exec($ch);
+        $httpCode   = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
         curl_close($ch);
 
         if ($httpCode !== 200) { http_response_code(404); exit; }
 
-        $rawHeaders = substr($response, 0, $headerSize);
-        $body       = substr($response, $headerSize);
+        $rawHeaders  = substr($response, 0, $headerSize);
+        $body        = substr($response, $headerSize);
+        $contentType = 'image/jpeg';
+        foreach (explode("\r\n", $rawHeaders) as $hLine) {
+            if (stripos($hLine, 'content-type:') === 0) {
+                $contentType = trim(substr($hLine, 13));
+                break;
+            }
+        }
 
+        header('Content-Type: ' . $contentType);
+        header('Cache-Control: public, max-age=3600');
+        echo $body;
+    } catch (Throwable $e) {
+        http_response_code(500);
+    }
+    exit;
+}
+
+// ---------------------------------------------------------------------------
+// Special: contact image proxy (returns raw image, not JSON)
+// ---------------------------------------------------------------------------
+
+if (($_GET['endpoint'] ?? '') === 'books_contact_image') {
+    $contactId = preg_replace('/[^a-zA-Z0-9_\-]/', '', $_GET['contact_id'] ?? '');
+    if ($contactId === '') { http_response_code(400); exit; }
+
+    try {
+        $oauth = new ZohoOAuth();
+        $token = $oauth->getValidAccessToken();
+        $cfg   = get_config();
+        $url   = rtrim($cfg['books_api_base'], '/') . '/contacts/' . rawurlencode($contactId) . '/image'
+               . '?' . http_build_query(['organization_id' => $cfg['books_org_id']]);
+
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT        => 15,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_HEADER         => true,
+            CURLOPT_HTTPHEADER     => ['Authorization: Zoho-oauthtoken ' . $token],
+        ]);
+        $response   = curl_exec($ch);
+        $httpCode   = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
+        curl_close($ch);
+
+        if ($httpCode !== 200) { http_response_code(404); exit; }
+
+        $rawHeaders  = substr($response, 0, $headerSize);
+        $body        = substr($response, $headerSize);
         $contentType = 'image/jpeg';
         foreach (explode("\r\n", $rawHeaders) as $hLine) {
             if (stripos($hLine, 'content-type:') === 0) {
@@ -124,7 +175,21 @@ if (!empty($spec['param'])) {
 }
 
 // ---------------------------------------------------------------------------
-// Fetch directly from Zoho API
+// Cache check — serve from disk if fresh
+// ---------------------------------------------------------------------------
+
+$ttl      = (int)($spec['ttl'] ?? 0);
+$cacheKey = $ttl > 0 ? $endpointKey . ($param !== '' ? '_' . $param : '') : null;
+
+if ($cacheKey !== null) {
+    $cache = new ApiCache($cacheKey);
+    if ($cache->isValid($ttl)) {
+        json_response(['source' => 'cache', 'data' => $cache->read()]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Fetch from Zoho API
 // ---------------------------------------------------------------------------
 
 try {
@@ -142,6 +207,13 @@ try {
 } catch (RuntimeException $e) {
     error_log("Proxy upstream error [{$endpointKey}]: " . $e->getMessage());
     json_response(['error' => 'upstream_error'], 502);
+}
+
+// Don't cache empty transaction results — an empty array often means the invoice
+// index hasn't been built yet, not that there are genuinely no transactions.
+$skipCache = $endpointKey === 'books_invoice_transactions' && empty($data);
+if ($cacheKey !== null && !$skipCache) {
+    (new ApiCache($cacheKey))->write($data);
 }
 
 json_response(['source' => 'api', 'data' => $data]);

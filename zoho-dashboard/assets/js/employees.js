@@ -16,19 +16,25 @@ $(function () {
 
     const PROXY = '/oms-zoho-dashboard/zoho-dashboard/api/proxy.php';
 
-    let allEmployees           = [];
-    let pmMap                  = {};   // item_id => { pm_id, pm_name }
-    let selectedId             = null;
-    let searchQuery            = '';
-    let pmFilter               = '';
-    let _recurringAllPromise   = null; // shared per-employee, reset on each loadDetail
-    const _charts              = {};   // active Chart.js instances keyed by canvas id
+    let allEmployees      = [];
+    let pmMap             = {};   // item_id => { pm_id, pm_name }
+    let selectedId        = null;
+    let searchQuery       = '';
+    let pmFilter          = '';
 
-    function getRecurringAll() {
-        if (!_recurringAllPromise) {
-            _recurringAllPromise = $.getJSON(PROXY + '?endpoint=books_recurring_all');
+    const _charts    = {};         // active Chart.js instances keyed by canvas id
+    const _cache     = new Map(); // session cache: url → jQuery promise
+
+    // Return a cached promise for url, creating and caching it on first call.
+    // Failed requests are evicted so the next call retries rather than re-using
+    // a rejected promise.
+    function apiGet(url) {
+        if (!_cache.has(url)) {
+            const req = $.getJSON(url);
+            req.fail(function () { _cache.delete(url); });
+            _cache.set(url, req);
         }
-        return _recurringAllPromise;
+        return _cache.get(url);
     }
 
     // -------------------------------------------------------------------------
@@ -39,6 +45,7 @@ $(function () {
 
     $('#btn-refresh').on('click', function () {
         $(this).prop('disabled', true);
+        _cache.clear(); // force a full refresh from server
         loadEmployees().always(() => $(this).prop('disabled', false));
     });
 
@@ -67,7 +74,7 @@ $(function () {
         $('#emp-list').html('<p class="sidebar-status">Loading\u2026</p>');
 
         // Load only the items list — renders the sidebar immediately.
-        return $.getJSON(PROXY + '?endpoint=books_items')
+        return apiGet(PROXY + '?endpoint=books_items')
             .done(function (itemsRes) {
                 allEmployees = (itemsRes.data || [])
                     .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -159,7 +166,14 @@ $(function () {
     // -------------------------------------------------------------------------
 
     function loadDetail(itemId, forceRefresh) {
-        _recurringAllPromise = null; // reset so new employee gets a fresh fetch
+        // Evict this item's cached responses so the next fetch goes back to the
+        // server (e.g. after an MSR save that invalidated the server-side cache).
+        if (forceRefresh) {
+            const idEnc = encodeURIComponent(itemId);
+            for (const key of _cache.keys()) {
+                if (key.includes(idEnc)) _cache.delete(key);
+            }
+        }
 
         // Destroy any active charts before swapping content.
         Object.keys(_charts).forEach(k => {
@@ -170,23 +184,21 @@ $(function () {
         const $detail = $('#app-detail');
         $detail.html('<div class="detail-loading"><span class="spinner"></span></div>');
 
-        const refresh = forceRefresh ? '&refresh=1' : '';
-
         // Start accurate transactions fetch immediately so it runs in parallel with
         // everything else. We do NOT wait for it before rendering — it is used in
         // two ways after the Overview is already visible:
         //  1. Silently re-draw charts with correct per-line-item amounts.
         //  2. Serve the Transactions tab instantly (already resolved by then).
-        const transactionsReq = $.getJSON(
+        const transactionsReq = apiGet(
             PROXY + '?endpoint=books_invoice_transactions&item_id=' + encodeURIComponent(itemId)
         );
 
         $.when(
-            $.getJSON(PROXY + '?endpoint=books_item_detail&item_id=' + encodeURIComponent(itemId) + refresh),
-            $.getJSON(PROXY + '?endpoint=books_invoices_by_item&item_id=' + encodeURIComponent(itemId)),
+            apiGet(PROXY + '?endpoint=books_item_detail&item_id='     + encodeURIComponent(itemId)),
+            apiGet(PROXY + '?endpoint=books_invoices_by_item&item_id=' + encodeURIComponent(itemId)),
         ).done(function (itemDetailRes, invoicesRes) {
-            const item    = itemDetailRes[0].data || null;
-            const invoices = invoicesRes[0].data || [];
+            const item     = itemDetailRes[0].data || null;
+            const invoices = invoicesRes[0].data   || [];
 
             if (!item) {
                 $detail.html('<div class="detail-empty"><p>Employee not found.</p></div>');
@@ -195,13 +207,18 @@ $(function () {
 
             // Fetch cfDefs + PM contact in parallel — both non-fatal.
             // PM contact ID comes from the "Project Manager" lookup custom field on the item.
-            const pmCf  = (item.custom_fields || []).find(f => (f.label || '').toLowerCase() === 'project manager');
-            const pmId  = pmCf ? String(pmCf.value || '').trim() : '';
+            const pmCf = (item.custom_fields || []).find(f => (f.label || '').toLowerCase() === 'project manager');
+            const pmId = pmCf ? String(pmCf.value || '').trim() : '';
 
-            const cfDefsReq = $.getJSON(PROXY + '?endpoint=books_item_customfields')
+            // Evict PM contact cache too when force-refreshing.
+            if (forceRefresh && pmId) {
+                _cache.delete(PROXY + '?endpoint=books_contact_detail&contact_id=' + encodeURIComponent(pmId));
+            }
+
+            const cfDefsReq = apiGet(PROXY + '?endpoint=books_item_customfields')
                 .then(function (r) { return r; }, function () { return { data: [] }; });
             const contactReq = pmId
-                ? $.getJSON(PROXY + '?endpoint=books_contact_detail&contact_id=' + encodeURIComponent(pmId) + refresh)
+                ? apiGet(PROXY + '?endpoint=books_contact_detail&contact_id=' + encodeURIComponent(pmId))
                     .then(function (r) { return r; }, function () { return { data: {} }; })
                 : $.when({ data: {} });
 
@@ -293,7 +310,9 @@ $(function () {
 
         const hasContact  = contact && contact.contact_id;
         const itemImageUrl = PROXY + '?endpoint=books_item_image&item_id=' + encodeURIComponent(item.item_id || '');
-        const photoUrl     = (contact && contact.photo_url) || '';
+        const contactImageUrl = hasContact
+            ? PROXY + '?endpoint=books_contact_image&contact_id=' + encodeURIComponent(contact.contact_id)
+            : '';
         const contactName = (contact && contact.contact_name) || '';
 
         const overviewRows = !hasContact
@@ -301,9 +320,7 @@ $(function () {
             : `<div class="ov-card">
                 <div class="ov-layout">
                     <div class="ov-left">
-                        <img class="ov-photo" src="${escAttr(itemImageUrl)}" alt=""
-                             onerror="this.style.display='none';this.nextElementSibling.style.display=''">
-                        <img class="ov-photo" src="${escAttr(photoUrl)}" alt="" style="display:none"
+                        <img class="ov-photo" src="${escAttr(contactImageUrl)}" alt=""
                              onerror="this.style.display='none';this.nextElementSibling.style.display=''">
                         <div class="ov-photo-fallback" style="display:none">${escHtml((contactName || item.name || '?')[0].toUpperCase())}</div>
                         <div class="ov-profile-name">${escHtml(contactName)}</div>
@@ -470,7 +487,10 @@ $(function () {
             <div class="detail-panel">
                 <div class="detail-header">
                     <div class="detail-title-row">
-                        <div class="detail-avatar">${escHtml(initials)}</div>
+                        <div class="detail-avatar">
+                            <img class="detail-avatar-img" src="${escAttr(itemImageUrl)}" alt="" onerror="this.remove()">
+                            ${escHtml(initials)}
+                        </div>
                         <div class="detail-title-text">
                             <h2 class="detail-name">${escHtml(item.name || '\u2014')}</h2>
                         </div>
@@ -839,7 +859,7 @@ $(function () {
         initReportCharts(rpt);
 
         // Populate Monthly Pledges and Avg Deficit KPIs in the Overview bar.
-        loadOvPledgesTotal(item, rpt.monthlyAvg);
+        loadOvPledgesTotal(item, rpt.monthlyAvg, msrMonthlyRequired);
 
         // Populate the Overview attachments strip.
         loadOvAttachments(item.item_id);
@@ -852,6 +872,10 @@ $(function () {
             const rptAccurate  = buildReportData(transactions, msrMonthlyRequired);
             initReportCharts(rptAccurate);
             $('#ov-monthly-avg').text(formatCurrency(rptAccurate.monthlyAvg));
+            const deficit = (msrMonthlyRequired || 0) - rptAccurate.monthlyAvg;
+            $('#ov-avg-deficit').text(formatCurrency(deficit))
+                .toggleClass('kpi-deficit', deficit > 0)
+                .toggleClass('kpi-surplus', deficit <= 0);
         });
 
         // Tab switching — load transactions, support and flow lazily on first click.
@@ -870,7 +894,10 @@ $(function () {
                 const $pane = $('#tab-transactions');
                 $pane.html('<div class="detail-loading"><span class="spinner"></span></div>');
                 transactionsReq
-                    .done(function (txnRes) { renderTransactionsTab($pane, txnRes.data || []); })
+                    .done(function (txnRes) {
+                        const transactions = txnRes.data || [];
+                        renderTransactionsTab($pane, transactions);
+                    })
                     .fail(function () { $pane.html('<p class="detail-empty-msg error-msg">Failed to load transactions. Try refreshing.</p>'); });
             }
             if (tab === 'support' && !supportReady) {
@@ -879,7 +906,7 @@ $(function () {
             }
             if (tab === 'flow' && !flowReady) {
                 flowReady = true;
-                renderFlowTab($('#tab-flow'), item);
+                renderFlowTab($('#tab-flow'), item, contact);
             }
         });
     }
@@ -993,17 +1020,50 @@ $(function () {
             return;
         }
 
-        const total = rows_data.reduce((s, inv) => s + (inv.total || 0), 0);
         $('#txn-tab-count').text(rows_data.length);
 
-        const rows = rows_data.map(inv => `<tr data-amount="${inv.total}">
-            <td>${formatDate(inv.date)}</td>
-            <td>${escHtml(inv.invoice_number || '—')}</td>
-            <td>${escHtml(inv.customer_name || '—')}</td>
-            <td class="amount-cell">${parseFloat(inv.quantity || 1).toFixed(2)}</td>
-            <td class="amount-cell">${formatCurrency(inv.price || 0)}</td>
-            <td class="amount-cell">${formatCurrency(inv.total || 0)}</td>
-        </tr>`).join('');
+        const STATUS_CLASS = {
+            paid: 'txn-badge-paid', draft: 'txn-badge-draft', sent: 'txn-badge-sent',
+            overdue: 'txn-badge-overdue', void: 'txn-badge-void',
+            partially_paid: 'txn-badge-partial',
+        };
+        function statusBadge(status) {
+            const s   = (status || '').toLowerCase();
+            const cls = STATUS_CLASS[s] || 'txn-badge-other';
+            const lbl = s === 'partially_paid' ? 'Partial'
+                      : s ? s.charAt(0).toUpperCase() + s.slice(1) : '—';
+            return s ? `<span class="txn-badge ${cls}">${escHtml(lbl)}</span>` : '—';
+        }
+
+        let sortCol = 'date';
+        let sortDir = -1; // -1 = newest first
+
+        function sortedData() {
+            return [...rows_data].sort((a, b) => {
+                if (sortCol === 'total') return sortDir * ((a.total || 0) - (b.total || 0));
+                const av = sortCol === 'date' ? (a.date || '')
+                         : sortCol === 'num'  ? (a.invoice_number || '')
+                         :                      (a.customer_name  || '');
+                const bv = sortCol === 'date' ? (b.date || '')
+                         : sortCol === 'num'  ? (b.invoice_number || '')
+                         :                      (b.customer_name  || '');
+                return sortDir * av.localeCompare(bv);
+            });
+        }
+
+        function buildRows(data) {
+            return data.map(inv => `<tr data-amount="${inv.total || 0}">
+                <td data-raw="${escHtml(inv.date || '')}">${formatDate(inv.date)}</td>
+                <td>${escHtml(inv.invoice_number || '—')}</td>
+                <td>${escHtml(inv.customer_name || '—')}</td>
+                <td>${statusBadge(inv.status)}</td>
+                <td class="amount-cell">${parseFloat(inv.quantity || 1).toFixed(2)}</td>
+                <td class="amount-cell">${formatCurrency(inv.price || 0)}</td>
+                <td class="amount-cell">${formatCurrency(inv.total || 0)}</td>
+            </tr>`).join('');
+        }
+
+        const total = rows_data.reduce((s, inv) => s + (inv.total || 0), 0);
 
         $pane.html(`
             <div class="txn-toolbar">
@@ -1013,6 +1073,7 @@ $(function () {
                         <option value="0">Date</option>
                         <option value="1">Invoice #</option>
                         <option value="2">Customer</option>
+                        <option value="3">Status</option>
                     </select>
                     <div class="txn-input-wrap">
                         <svg class="txn-search-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
@@ -1022,26 +1083,53 @@ $(function () {
                                placeholder="Search…" autocomplete="off">
                     </div>
                 </div>
-                <span id="txn-count" class="txn-count">${rows_data.length} records</span>
+                <div class="txn-toolbar-right">
+                    <span id="txn-count" class="txn-count">${rows_data.length} records</span>
+                    <button id="txn-export" class="txn-export-btn" title="Export visible rows as CSV">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14" aria-hidden="true">
+                            <path d="M10 3v10M6 9l4 4 4-4M4 16h12"/>
+                        </svg>
+                        Export CSV
+                    </button>
+                </div>
             </div>
             <div class="detail-table-wrap">
                 <table class="data-table invoices-table">
                     <thead><tr>
-                        <th>Date</th>
-                        <th>Invoice #</th>
-                        <th>Customer Name</th>
-                        <th class="amount-cell">Quantity Sold</th>
+                        <th class="txn-th-sort" data-sort="date">Date</th>
+                        <th class="txn-th-sort" data-sort="num">Invoice #</th>
+                        <th class="txn-th-sort" data-sort="cust">Customer Name</th>
+                        <th>Status</th>
+                        <th class="amount-cell">Qty</th>
                         <th class="amount-cell">Price</th>
-                        <th class="amount-cell">Total</th>
+                        <th class="amount-cell txn-th-sort" data-sort="total">Total</th>
                     </tr></thead>
-                    <tbody>${rows}</tbody>
+                    <tbody>${buildRows(sortedData())}</tbody>
                     <tfoot><tr class="total-row">
-                        <td colspan="5">Total</td>
+                        <td colspan="6">Total</td>
                         <td class="amount-cell txn-total">${formatCurrency(total)}</td>
                     </tr></tfoot>
                 </table>
             </div>
         `);
+
+        function updateSortHeaders() {
+            $pane.find('.txn-th-sort').each(function () {
+                const col = $(this).data('sort');
+                $(this).toggleClass('sort-asc',  col === sortCol && sortDir ===  1)
+                       .toggleClass('sort-desc', col === sortCol && sortDir === -1);
+            });
+        }
+        updateSortHeaders();
+
+        $pane.find('.txn-th-sort').on('click', function () {
+            const col = $(this).data('sort');
+            sortDir = col === sortCol ? -sortDir : (col === 'date' ? -1 : 1);
+            sortCol = col;
+            updateSortHeaders();
+            $pane.find('.invoices-table tbody').html(buildRows(sortedData()));
+            applyTxnFilter();
+        });
 
         function applyTxnFilter() {
             const q     = $pane.find('#txn-filter').val().trim().toLowerCase();
@@ -1057,25 +1145,53 @@ $(function () {
             let filteredTotal = 0;
             $rows.filter(':visible').each(function () { filteredTotal += parseFloat($(this).data('amount')) || 0; });
             const visible = $rows.filter(':visible').length;
-            const total   = $rows.length;
+            const count   = $rows.length;
             $pane.find('.txn-total').text(formatCurrency(filteredTotal));
-            $pane.find('#txn-count').text(q ? visible + ' of ' + total + ' records' : total + ' records');
+            $pane.find('#txn-count').text(q ? visible + ' of ' + count + ' records' : count + ' records');
         }
         $pane.find('#txn-filter, #txn-field').on('input change', applyTxnFilter);
+
+        $pane.find('#txn-export').on('click', function () {
+            const $rows = $pane.find('.invoices-table tbody tr:visible');
+            const lines = [['Date', 'Invoice #', 'Customer Name', 'Status', 'Quantity', 'Price', 'Total']];
+            $rows.each(function () {
+                const tds = $(this).find('td');
+                lines.push([
+                    tds.eq(0).attr('data-raw') || tds.eq(0).text().trim(),
+                    tds.eq(1).text().trim(),
+                    tds.eq(2).text().trim(),
+                    tds.eq(3).text().trim(),
+                    tds.eq(4).text().trim(),
+                    tds.eq(5).text().trim(),
+                    parseFloat($(this).data('amount') || 0).toFixed(2),
+                ]);
+            });
+            const csv  = lines.map(r => r.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(',')).join('\r\n');
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url  = URL.createObjectURL(blob);
+            const a    = document.createElement('a');
+            a.href     = url;
+            a.download = 'transactions.csv';
+            a.click();
+            URL.revokeObjectURL(url);
+        });
     }
 
-    function loadOvPledgesTotal(item, monthlyAvg) {
+    function loadOvPledgesTotal(item, monthlyAvg, msrMonthly) {
         const $pledges = $('#ov-pledges-total');
         const $deficit = $('#ov-avg-deficit');
-        getRecurringAll()
+
+        // Avg Deficit = Monthly MSR − Monthly Avg Income (always computed immediately).
+        const deficit = (msrMonthly || 0) - monthlyAvg;
+        $deficit.text(formatCurrency(deficit))
+            .toggleClass('kpi-deficit', deficit > 0)
+            .toggleClass('kpi-surplus', deficit <= 0);
+
+        apiGet(PROXY + '?endpoint=books_recurring_all')
             .done(function (res) {
                 const matched = (res.data || []).filter(ri => supportMatch(item.name, ri.recurrence_name));
                 if (matched.length === 0) {
                     $pledges.text(formatCurrency(0));
-                    const deficit = 0 - monthlyAvg;
-                    $deficit.text(formatCurrency(deficit))
-                        .toggleClass('kpi-deficit', deficit > 0)
-                        .toggleClass('kpi-surplus', deficit <= 0);
                     return;
                 }
 
@@ -1083,7 +1199,7 @@ $(function () {
                 let remaining  = matched.length;
 
                 matched.forEach(function (r, i) {
-                    $.getJSON(PROXY + '?endpoint=books_recurring_detail&recurring_invoice_id=' + encodeURIComponent(r.recurring_invoice_id))
+                    apiGet(PROXY + '?endpoint=books_recurring_detail&recurring_invoice_id=' + encodeURIComponent(r.recurring_invoice_id))
                         .done(function (res2) {
                             const d = res2.data || {};
                             enriched[i].invoiceAmount = parseFloat(d.amount || d.sub_total || 0);
@@ -1098,22 +1214,18 @@ $(function () {
                                     }
                                 });
                                 const pledgesTotal = Object.values(bestMap).reduce((s, r) => s + calcMonthlyPledge(r), 0);
-                                const deficit      = pledgesTotal - monthlyAvg;
                                 $pledges.text(formatCurrency(pledgesTotal));
-                                $deficit.text(formatCurrency(deficit))
-                                    .toggleClass('kpi-deficit', deficit > 0)
-                                    .toggleClass('kpi-surplus', deficit <= 0);
                             }
                         });
                 });
             })
-            .fail(function () { $pledges.text('—'); $deficit.text('—'); });
+            .fail(function () { $pledges.text('—'); });
     }
 
     function renderSupportTab($pane, item, msrMonthly) {
         $pane.html('<div class="detail-loading"><span class="spinner"></span></div>');
 
-        getRecurringAll()
+        apiGet(PROXY + '?endpoint=books_recurring_all')
             .done(function (res) {
                 const all = res.data || [];
 
@@ -1204,7 +1316,7 @@ $(function () {
                 }
 
                 matched.forEach(function (r, i) {
-                    $.getJSON(PROXY + '?endpoint=books_recurring_detail&recurring_invoice_id=' + encodeURIComponent(r.recurring_invoice_id))
+                    apiGet(PROXY + '?endpoint=books_recurring_detail&recurring_invoice_id=' + encodeURIComponent(r.recurring_invoice_id))
                         .done(function (res) {
                             const detail = res.data || {};
                             enriched[i].invoiceAmount = parseFloat(detail.amount || detail.sub_total || 0);
@@ -1223,88 +1335,115 @@ $(function () {
     // Flow tab — file uploads and attachment display
     // -------------------------------------------------------------------------
 
-    const ATTACHMENTS_URL = '/oms-zoho-dashboard/zoho-dashboard/api/attachments.php';
-    const UPLOAD_URL      = '/oms-zoho-dashboard/zoho-dashboard/api/upload.php';
-    const DELETE_ATT_URL  = '/oms-zoho-dashboard/zoho-dashboard/api/delete_attachment.php';
-    const UPLOADS_BASE    = '/oms-zoho-dashboard/zoho-dashboard/uploads/';
+    const ATTACHMENTS_URL              = '/oms-zoho-dashboard/zoho-dashboard/api/attachments.php';
+    const UPLOADS_BASE                 = '/oms-zoho-dashboard/zoho-dashboard/uploads/';
+    const ZOHO_CONTACT_ATTACHMENTS_URL = '/oms-zoho-dashboard/zoho-dashboard/api/zoho_contact_attachments.php';
+    const ZOHO_CONTACT_UPLOAD_URL      = '/oms-zoho-dashboard/zoho-dashboard/api/zoho_contact_upload.php';
+    const ZOHO_CONTACT_DELETE_URL      = '/oms-zoho-dashboard/zoho-dashboard/api/zoho_contact_delete_attachment.php';
+    const ZOHO_ATTACHMENT_FILE_URL     = '/oms-zoho-dashboard/zoho-dashboard/api/zoho_attachment_file.php';
+
+    function zohoFileTypeMime(fileType) {
+        const t = (fileType || '').toLowerCase();
+        if (t === 'jpg' || t === 'jpeg') return 'image/jpeg';
+        if (t === 'png')  return 'image/png';
+        if (t === 'gif')  return 'image/gif';
+        if (t === 'webp') return 'image/webp';
+        if (t === 'pdf')  return 'application/pdf';
+        return 'application/octet-stream';
+    }
 
     function attFileUrl(itemId, fileId) {
         return UPLOADS_BASE + encodeURIComponent(itemId) + '/' + encodeURIComponent(fileId);
     }
 
     function attIcon(mime) {
-        if (mime.startsWith('image/'))          return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="flow-file-icon"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';
-        if (mime === 'application/pdf')         return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="flow-file-icon"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h4"/></svg>';
+        if (mime.startsWith('image/'))  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="flow-file-icon"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';
+        if (mime === 'application/pdf') return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="flow-file-icon"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h4"/></svg>';
         return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="flow-file-icon"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>';
     }
 
-    function attFormatSize(bytes) {
-        return bytes < 1024 * 1024
-            ? (bytes / 1024).toFixed(1) + ' KB'
-            : (bytes / 1024 / 1024).toFixed(1) + ' MB';
-    }
+    function renderFlowTab($pane, item, contact) {
+        const pmCf   = (item.custom_fields || []).find(f => (f.label || '').toLowerCase() === 'project manager');
+        const pmId   = pmCf ? String(pmCf.value || '').trim() : '';
+        const pmName = pmId ? (contact && (contact.contact_name || contact.display_name || '')) || 'Project Manager' : '';
 
-    function renderFlowTab($pane, item) {
-        $pane.html(`
-            <div class="flow-upload-zone" id="flow-dropzone">
+        if (!pmId) {
+            $('#flow-tab-count').text('');
+            $pane.html('<p class="detail-empty-msg">No project manager is assigned to this employee.</p>');
+            return;
+        }
+
+        $pane.html(`<div class="flow-section">
+            <div class="flow-section-hd">
+                <span class="flow-section-title">${escHtml(pmName)}</span>
+                <span class="flow-section-count"></span>
+            </div>
+            <div class="flow-upload-zone flow-dropzone">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="flow-zone-icon">
                     <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
                     <polyline points="17 8 12 3 7 8"/>
                     <line x1="12" y1="3" x2="12" y2="15"/>
                 </svg>
                 <p class="flow-zone-label">Drop files here or
-                    <label for="flow-file-input" class="flow-zone-link">click to upload</label>
+                    <label for="flow-file-pm" class="flow-zone-link">click to upload</label>
                 </p>
                 <p class="flow-zone-hint">Images, PDF, Word, Excel &bull; Max 10 MB each</p>
-                <input type="file" id="flow-file-input" multiple
+                <input type="file" id="flow-file-pm" class="flow-file-input" multiple
                        accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
                        style="display:none">
             </div>
-            <div class="flow-progress" id="flow-progress" style="display:none"></div>
-            <div class="flow-list" id="flow-list">
+            <div class="flow-progress" style="display:none"></div>
+            <div class="flow-list">
                 <div class="detail-loading"><span class="spinner"></span></div>
             </div>
-        `);
+        </div>`);
 
-        function fetchAndRenderAttachments(refreshOvStrip) {
-            $.getJSON(ATTACHMENTS_URL + '?item_id=' + encodeURIComponent(item.item_id))
-                .done(function (res) {
-                    renderFlowList(res.attachments || []);
-                    if (refreshOvStrip) loadOvAttachments(item.item_id);
-                })
-                .fail(function () {
-                    $pane.find('#flow-list').html('<p class="flow-empty error-msg">Failed to load attachments.</p>');
+        const $section = $pane.find('.flow-section');
+
+        function fetchAndRender() {
+            $section.find('.flow-list').html('<div class="detail-loading"><span class="spinner"></span></div>');
+            $.getJSON(ZOHO_CONTACT_ATTACHMENTS_URL + '?contact_id=' + encodeURIComponent(pmId))
+                .done(function (res) { renderList(res.documents || []); })
+                .fail(function (jqXHR) {
+                    let msg = 'Failed to load attachments.';
+                    try { msg = (JSON.parse(jqXHR.responseText).error) || msg; } catch (e) {}
+                    $section.find('.flow-list').html('<p class="flow-empty error-msg">' + escHtml(msg) + '</p>');
                 });
         }
 
-        function renderFlowList(files) {
-            const $list = $pane.find('#flow-list');
+        function renderList(files) {
+            const $list = $section.find('.flow-list');
+            $section.find('.flow-section-count').text(files.length || '');
             $('#flow-tab-count').text(files.length || '');
-            if (!files.length) {
-                $list.html('<p class="flow-empty">No files uploaded yet.</p>');
-                return;
-            }
-            $list.html(files.map(f => {
-                const url      = attFileUrl(item.item_id, f.id);
-                const isImage  = f.mime.startsWith('image/');
-                const preview  = isImage
-                    ? `<img src="${escAttr(url)}" class="flow-thumb" alt="${escAttr(f.original_name)}" loading="lazy">`
-                    : `<div class="flow-icon-wrap">${attIcon(f.mime)}</div>`;
-                return `<div class="flow-card" data-id="${escAttr(f.id)}">
+            if (!files.length) { $list.html(''); return; }
+            $list.html(files.map(function (f) {
+                const mime    = zohoFileTypeMime(f.file_type);
+                const url     = ZOHO_ATTACHMENT_FILE_URL
+                                + '?contact_id='  + encodeURIComponent(pmId)
+                                + '&document_id=' + encodeURIComponent(f.document_id);
+                const isImage = mime.startsWith('image/');
+                const preview = isImage
+                    ? `<img src="${escAttr(url)}" class="flow-thumb" alt="${escAttr(f.file_name)}" loading="lazy">`
+                    : `<div class="flow-icon-wrap">${attIcon(mime)}</div>`;
+                return `<div class="flow-card" data-id="${escAttr(f.document_id)}">
                     <a href="${escAttr(url)}" target="_blank" class="flow-preview">${preview}</a>
                     <div class="flow-info">
-                        <span class="flow-name" title="${escAttr(f.original_name)}">${escHtml(f.original_name)}</span>
-                        <span class="flow-meta">${escHtml(formatDate(f.uploaded_at.slice(0, 10)))} &bull; ${escHtml(attFormatSize(f.size))}</span>
+                        <span class="flow-name" title="${escAttr(f.file_name)}">${escHtml(f.file_name)}</span>
+                        <span class="flow-meta">${f.uploaded_time ? escHtml(formatDate(f.uploaded_time)) : ''}${f.file_size ? ' &bull; ' + escHtml(f.file_size) : ''}</span>
                     </div>
-                    <button class="flow-del-btn" data-id="${escAttr(f.id)}" title="Delete">&times;</button>
+                    <button class="flow-del-btn" data-id="${escAttr(f.document_id)}" title="Delete">&times;</button>
                 </div>`;
             }).join(''));
+            // error event doesn't bubble so delegate won't work — bind directly after DOM insert
+            $list.find('img.flow-thumb').on('error', function () {
+                $(this).closest('.flow-preview').html('<div class="flow-icon-wrap">' + attIcon('image/jpeg') + '</div>');
+            });
         }
 
         function uploadFiles(fileList) {
             const files = Array.from(fileList);
             if (!files.length) return;
-            const $prog = $pane.find('#flow-progress').show().html('');
+            const $prog = $section.find('.flow-progress').show().html('');
             let pending = files.length;
 
             files.forEach(function (file) {
@@ -1315,10 +1454,10 @@ $(function () {
                 $prog.append($row);
 
                 const fd = new FormData();
-                fd.append('item_id', item.item_id);
+                fd.append('contact_id', pmId);
                 fd.append('file', file);
 
-                $.ajax({ url: UPLOAD_URL, type: 'POST', data: fd, processData: false, contentType: false })
+                $.ajax({ url: ZOHO_CONTACT_UPLOAD_URL, type: 'POST', data: fd, processData: false, contentType: false })
                     .done(function (res) {
                         if (res.success) {
                             $row.find('.flow-prog-status').text('Done').addClass('flow-prog-ok');
@@ -1326,51 +1465,55 @@ $(function () {
                             $row.find('.flow-prog-status').text(res.error || 'Failed').addClass('flow-prog-err');
                         }
                     })
-                    .fail(function () {
-                        $row.find('.flow-prog-status').text('Failed').addClass('flow-prog-err');
+                    .fail(function (jqXHR) {
+                        let msg = 'Failed';
+                        try { msg = (JSON.parse(jqXHR.responseText).error) || msg; } catch (e) {}
+                        $row.find('.flow-prog-status').text(msg).addClass('flow-prog-err');
                     })
                     .always(function () {
                         if (--pending === 0) {
-                            setTimeout(function () {
-                                $prog.hide().html('');
-                                fetchAndRenderAttachments(true);
-                            }, 1200);
+                            setTimeout(function () { $prog.hide().html(''); fetchAndRender(); }, 1200);
                         }
                     });
             });
         }
 
-        fetchAndRenderAttachments(false);
+        fetchAndRender();
 
-        // File input change
-        $pane.on('change', '#flow-file-input', function () {
+        $section.on('change', '.flow-file-input', function () {
             uploadFiles(this.files);
             this.value = '';
         });
 
-        // Drag & drop
-        const $zone = $pane.find('#flow-dropzone');
-        $zone.on('dragover dragenter', function (e) {
-            e.preventDefault();
-            $(this).addClass('flow-drop-active');
-        }).on('dragleave drop', function (e) {
-            e.preventDefault();
-            $(this).removeClass('flow-drop-active');
-            if (e.type === 'drop') uploadFiles(e.originalEvent.dataTransfer.files);
-        });
+        $section.find('.flow-dropzone')
+            .on('click', function (e) {
+                if ($(e.target).closest('label, input[type=file]').length) return;
+                $section.find('.flow-file-input').trigger('click');
+            })
+            .on('dragover dragenter', function (e) {
+                e.preventDefault();
+                $(this).addClass('flow-drop-active');
+            })
+            .on('dragleave drop', function (e) {
+                e.preventDefault();
+                $(this).removeClass('flow-drop-active');
+                if (e.type === 'drop') uploadFiles(e.originalEvent.dataTransfer.files);
+            });
 
-        // Delete
-        $pane.on('click', '.flow-del-btn', function () {
-            const fileId = $(this).data('id');
+
+        $section.on('click', '.flow-del-btn', function () {
+            const docId = $(this).data('id');
             if (!confirm('Delete this attachment?')) return;
             $.ajax({
-                url:         DELETE_ATT_URL,
-                type:        'POST',
-                contentType: 'application/json',
-                data:        JSON.stringify({ item_id: item.item_id, file_id: fileId }),
+                url: ZOHO_CONTACT_DELETE_URL, type: 'POST', contentType: 'application/json',
+                data: JSON.stringify({ contact_id: pmId, document_id: docId }),
             })
-            .done(function () { fetchAndRenderAttachments(true); })
-            .fail(function () { alert('Failed to delete. Please try again.'); });
+            .done(function () { fetchAndRender(); })
+            .fail(function (jqXHR) {
+                let msg = 'Failed to delete. Please try again.';
+                try { msg = (JSON.parse(jqXHR.responseText).error) || msg; } catch (e) {}
+                alert(msg);
+            });
         });
     }
 

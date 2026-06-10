@@ -6,6 +6,9 @@ zoho-dashboard-config/tokens.json.tmp
 # API response cache
 zoho-dashboard-config/cache/
 
+# Locally cached contact attachment files (populated at runtime)
+zoho-dashboard/uploads/
+
 # Claude Code local settings
 .claude/
 

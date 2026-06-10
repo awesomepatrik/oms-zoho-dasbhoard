@@ -547,6 +547,15 @@ body.app-body {
     justify-content: center;
     flex-shrink: 0;
     letter-spacing: 0.03em;
+    position: relative;
+    overflow: hidden;
+}
+.detail-avatar-img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
 }
 
 .detail-title-text {
@@ -1076,6 +1085,42 @@ body.app-body {
     flex-shrink: 0;
 }
 
+.txn-toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.txn-export-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    background: var(--colour-bg);
+    border: 1px solid var(--colour-border);
+    border-radius: var(--radius);
+    font-size: 0.78rem;
+    color: var(--colour-text);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.txn-export-btn:hover {
+    background: var(--colour-secondary);
+    border-color: var(--colour-secondary);
+    color: #fff;
+}
+
+.txn-th-sort {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+.txn-th-sort::after       { content: ' \2195'; opacity: 0.3; font-size: 0.8em; }
+.txn-th-sort.sort-asc::after  { content: ' \2191'; opacity: 1; }
+.txn-th-sort.sort-desc::after { content: ' \2193'; opacity: 1; }
+
 /* ---------------------------------------------------------
    MSR tab
    --------------------------------------------------------- */
@@ -1417,6 +1462,43 @@ body.app-body {
     gap: 1rem;
     padding: 1rem;
     overflow-y: auto;
+}
+#tab-flow.is-hidden { display: none; }
+
+/* Section wrapper (employee / PM) */
+.flow-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.flow-section-hd {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.flow-section-title {
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--colour-text-muted);
+}
+
+.flow-section-count {
+    font-size: 0.72rem;
+    background: var(--colour-border);
+    color: var(--colour-text-muted);
+    border-radius: 10px;
+    padding: 1px 7px;
+    font-weight: 600;
+}
+
+.flow-section-divider {
+    border: none;
+    border-top: 1px solid var(--colour-border);
+    margin: 0.25rem 0;
 }
 
 /* Upload drop zone */
