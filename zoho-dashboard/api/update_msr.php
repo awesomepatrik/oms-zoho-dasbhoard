@@ -4,13 +4,10 @@
  *
  * POST body (JSON):
  *   { "item_id": "...", "field_id": "...", "value": "<div>...</div>" }
- *
- * On success, invalidates the item-detail cache and returns {"success":true}.
  */
 
 require_once __DIR__ . '/../lib/helpers.php';
 require_once __DIR__ . '/../lib/ZohoOAuth.php';
-require_once __DIR__ . '/../lib/ApiCache.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -73,8 +70,5 @@ if ($status !== 200 || ($decoded['code'] ?? -1) !== 0) {
     echo json_encode(['error' => 'update_failed', 'message' => $decoded['message'] ?? 'Unknown error']);
     exit;
 }
-
-// Invalidate the cached item detail so the next load fetches fresh data.
-(new ApiCache('books_item_detail_' . $itemId))->invalidate();
 
 echo json_encode(['success' => true]);

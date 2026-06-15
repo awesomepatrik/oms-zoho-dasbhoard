@@ -103,7 +103,10 @@ function books_getContacts(string $token): array
  */
 function books_getItems(string $token): array
 {
-    return books_paginate($token, '/items', 'items');
+    return books_paginate($token, '/items', 'items', [
+        'filter_by' => 'Status.All',
+        'per_page'  => 200,
+    ]);
 }
 
 /**
@@ -193,7 +196,6 @@ function books_getEmployeeContact(string $token, string $itemId): array
 
 /**
  * Return a map of item_id => ['pm_id' => ..., 'pm_name' => ...].
- * Fetches every item's detail directly from the Zoho API (no cache).
  * Custom fields (including Project Manager) are only available in the detail endpoint.
  */
 function books_getItemsPmMap(string $token): array
@@ -271,503 +273,38 @@ function books_getItemCustomFields(string $token): array
 }
 
 /**
- * Return a map of item_id => true for every item that appears in at least
- * one paid invoice. Builds the invoice index directly from the Zoho API.
- */
-function books_getItemInvoiceStatus(string $token): array
-{
-    $index  = books_getInvoiceIndex($token);
-    $status = [];
-    foreach (array_keys($index) as $key) {
-        if (!str_starts_with($key, 'name:') && !str_starts_with($key, 'tokens:')) {
-            $status[$key] = true;
-        }
-    }
-    return $status;
-}
-
-/**
- * Return the set of item_ids that appear in at least one paid invoice.
- *
- * Fetches all paid invoice details in parallel batches to read line_items,
- * then returns a plain array of unique item_id strings.
- * Cached for 1 hour — first call is slow, subsequent calls are instant.
- */
-function books_getItemIdsWithInvoices(string $token): array
-{
-    set_time_limit(120);
-
-    $config  = get_config();
-    $orgId   = $config['books_org_id'];
-    $baseUrl = rtrim($config['books_api_base'], '/');
-
-    $list = books_paginate(
-        $token, '/invoices', 'invoices',
-        ['filter_by' => 'Status.Paid', 'sort_column' => 'date', 'sort_order' => 'D']
-    );
-
-    if (empty($list)) {
-        return [];
-    }
-
-    $itemIds = [];
-
-    foreach (array_chunk($list, 20) as $batch) {
-        $mh      = curl_multi_init();
-        $handles = [];
-
-        foreach ($batch as $stub) {
-            $invoiceId = $stub['invoice_id'] ?? '';
-            if ($invoiceId === '') continue;
-
-            $ch = curl_init(
-                "{$baseUrl}/invoices/" . rawurlencode($invoiceId)
-                . '?' . http_build_query(['organization_id' => $orgId])
-            );
-            curl_setopt_array($ch, [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_TIMEOUT        => 20,
-                CURLOPT_SSL_VERIFYPEER => true,
-                CURLOPT_HTTPHEADER     => [
-                    'Authorization: Zoho-oauthtoken ' . $token,
-                    'Accept: application/json',
-                ],
-            ]);
-            curl_multi_add_handle($mh, $ch);
-            $handles[] = $ch;
-        }
-
-        do {
-            curl_multi_exec($mh, $running);
-            curl_multi_select($mh);
-        } while ($running > 0);
-
-        foreach ($handles as $ch) {
-            $decoded = json_decode(curl_multi_getcontent($ch), true);
-            curl_multi_remove_handle($mh, $ch);
-
-            foreach ($decoded['invoice']['line_items'] ?? [] as $li) {
-                $id = (string)($li['item_id'] ?? '');
-                if ($id !== '') {
-                    $itemIds[$id] = true;
-                }
-            }
-        }
-
-        curl_multi_close($mh);
-    }
-
-    return array_keys($itemIds);
-}
-
-/**
- * Build (or return cached) a reverse index of item_id / item_name → invoices.
- *
- * Fetches ALL paid invoice details in parallel batches of 10, reads each
- * invoice's line_items, and maps every item_id (and item name) found to the
- * compact invoice records that contain it.
- *
- * Cost: one fetch of 683 invoice details (~3-5 min with rate-limit back-off).
- * This is paid ONCE and shared by every employee — subsequent per-employee
- * lookups just read from this cache instantly.
- *
- * Cache TTL: 24 hours.
- *
- * @return array  { "item_id" => [compact_invoice, …], "name:foo" => […], … }
- */
-function books_buildInvoiceIndex(string $token): array
-{
-    set_time_limit(600);   // up to 10 minutes for the initial build
-
-    $config  = get_config();
-    $orgId   = $config['books_org_id'];
-    $baseUrl = rtrim($config['books_api_base'], '/');
-
-    $list = books_paginate($token, '/invoices', 'invoices', [
-        'filter_by'   => 'Status.Paid',
-        'per_page'    => 200,
-        'sort_column' => 'date',
-        'sort_order'  => 'D',
-    ]);
-
-    if (empty($list)) {
-        return [];
-    }
-
-    $index = [];
-
-    foreach (array_chunk($list, 3) as $batchIndex => $batch) {
-        // Pause between batches — 3 invoices × 5s ≈ 18 req/min, well under rate limit.
-        if ($batchIndex > 0) sleep(5);
-
-        $pending = $batch;
-
-        // Retry loop: re-send any invoice that returns 429 or code 44.
-        for ($attempt = 0; $attempt < 3 && !empty($pending); $attempt++) {
-            if ($attempt > 0) {
-                sleep(15); // longer back-off before retry
-            }
-
-            $mh      = curl_multi_init();
-            $handles = []; // curl_handle => invoice_stub
-
-            foreach ($pending as $stub) {
-                $invoiceId = $stub['invoice_id'] ?? '';
-                if ($invoiceId === '') continue;
-
-                $ch = curl_init(
-                    "{$baseUrl}/invoices/" . rawurlencode($invoiceId)
-                    . '?' . http_build_query(['organization_id' => $orgId])
-                );
-                curl_setopt_array($ch, [
-                    CURLOPT_RETURNTRANSFER => true,
-                    CURLOPT_TIMEOUT        => 20,
-                    CURLOPT_SSL_VERIFYPEER => true,
-                    CURLOPT_HTTPHEADER     => [
-                        'Authorization: Zoho-oauthtoken ' . $token,
-                        'Accept: application/json',
-                    ],
-                ]);
-                curl_multi_add_handle($mh, $ch);
-                $handles[spl_object_id($ch)] = ['ch' => $ch, 'stub' => $stub];
-            }
-
-            do {
-                curl_multi_exec($mh, $running);
-                curl_multi_select($mh);
-            } while ($running > 0);
-
-            $pending = [];
-
-            foreach ($handles as ['ch' => $ch, 'stub' => $stub]) {
-                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-                $body     = curl_multi_getcontent($ch);
-                curl_multi_remove_handle($mh, $ch);
-
-                if ($httpCode === 429) {
-                    $pending[] = $stub; // will retry
-                    continue;
-                }
-
-                if ($httpCode !== 200) continue;
-
-                $decoded = json_decode($body, true);
-                // Code 44 = org rate block — retry this invoice.
-                if (isset($decoded['code']) && (int)$decoded['code'] === 44) {
-                    $pending[] = $stub;
-                    continue;
-                }
-                if (!isset($decoded['invoice']['line_items'])) continue;
-
-                $inv = $decoded['invoice'];
-
-                $record = [
-                    'invoice_id'     => $inv['invoice_id']     ?? '',
-                    'invoice_number' => $inv['invoice_number'] ?? '',
-                    'date'           => $inv['date']           ?? '',
-                    'customer_name'  => $inv['customer_name']  ?? '',
-                    'total'          => $inv['total']          ?? 0,
-                ];
-
-                // Index by item_id, normalised name, and sorted-word tokens.
-                $seen = [];
-                foreach ($inv['line_items'] as $li) {
-                    $liId     = (string)($li['item_id'] ?? '');
-                    $liName   = books_normalise_name($li['name'] ?? '');
-                    $liTokens = books_name_tokens($li['name'] ?? '');
-
-                    if ($liId !== '' && !isset($seen[$liId])) {
-                        $index[$liId][] = $record;
-                        $seen[$liId]    = true;
-                    }
-                    if ($liName !== '' && !isset($seen['n:' . $liName])) {
-                        $index['name:' . $liName][] = $record;
-                        $seen['n:' . $liName]       = true;
-                    }
-                    if ($liTokens !== '' && !isset($seen['t:' . $liTokens])) {
-                        $index['tokens:' . $liTokens][] = $record;
-                        $seen['t:' . $liTokens]         = true;
-                    }
-                }
-            }
-
-            curl_multi_close($mh);
-        }
-    }
-
-    return $index;
-}
-
-/**
- * Return the global invoice index, building and caching it on first call.
- * A file lock prevents concurrent builds from doubling the API load on Zoho.
- * ignore_user_abort keeps the build running even when the browser disconnects.
- */
-function books_getInvoiceIndex(string $token): array
-{
-    require_once __DIR__ . '/../lib/ApiCache.php';
-    $cache = new ApiCache('books_invoice_index');
-
-    // Web requests only serve from cache — never auto-build.
-    // Building the index requires ~1 API call per invoice and will exhaust the
-    // daily 10,000-call quota. Run warm_invoice_index.php from the CLI instead.
-    if ($cache->isValid(14400)) {
-        return $cache->read();
-    }
-
-    return [];
-}
-
-/**
- * Return paid invoices that contain a specific item (employee).
- * Uses the Zoho Books item_id filter directly — no index required.
+ * Return paid invoices for an employee's contact (customer_id).
+ * Resolves item → contact, then filters GET /invoices by customer_id.
  */
 function books_getInvoicesByItem(string $token, string $itemId): array
 {
+    $contact    = books_getEmployeeContact($token, $itemId);
+    $customerId = $contact['contact_id'] ?? '';
+    if ($customerId === '') return [];
+
     return books_paginate($token, '/invoices', 'invoices', [
-        'filter_by' => 'Status.Paid',
-        'item_id'   => $itemId,
+        'customer_id' => $customerId,
+        'filter_by'   => 'Status.Paid',
     ]);
 }
 
 /**
- * Return paid invoice transactions for a specific item over the last 12 months.
- *
- * Uses two sources, tried in order:
- *
- * 1. Invoice index cache (built via warm_invoice_index.php CLI) — covers both
- *    linked and free-text line items. Costs 0 extra API calls when warm.
- *
- * 2. Direct item_id filter — 2-5 API calls. Works for items that have a Zoho
- *    item_id set. Returns empty for free-text items (no item_id filter exists
- *    in the Zoho Books API for line item names).
- *
- * The index is never auto-built here — run warm_invoice_index.php from the CLI.
+ * Return invoices for a specific item using GET /invoices?item_id=...
+ * Follows the endpoint: /invoices?organization_id={org_id}&item_id={item_id}
  */
 function books_getInvoiceTransactions(string $token, string $itemId): array
 {
-    $cfg      = get_config();
-    $orgId    = $cfg['books_org_id'];
-    $baseUrl  = rtrim($cfg['books_api_base'], '/');
+    if ($itemId === '') return [];
+
     $dateFrom = date('Y-m-d', strtotime('-12 months'));
 
-    require_once __DIR__ . '/../lib/ApiCache.php';
+    $invoices = books_paginate($token, '/invoices', 'invoices', [
+        'item_id'    => $itemId,
+        'date_start' => $dateFrom,
+        'per_page'   => 200,
+    ]);
 
-    // Resolve item name for scored line-item matching (used when index is warm).
-    $itemCache = new ApiCache('books_item_detail_' . $itemId);
-    $itemData  = $itemCache->isValid(3600) ? $itemCache->read() : [];
-    if (empty($itemData)) {
-        try { $itemData = books_getItemDetail($token, $itemId); } catch (RuntimeException $e) {}
-    }
-    $normName = books_normalise_name($itemData['name'] ?? '');
-    $tokens   = books_name_tokens($itemData['name'] ?? '');
-
-    $invoiceIds = [];
-
-    // --- Source 1: invoice index (warm cache, zero extra API calls) ---
-    $indexCache = new ApiCache('books_invoice_index');
-    if ($indexCache->isValid(14400)) {
-        $index = $indexCache->read();
-        $seen  = [];
-        foreach (array_filter([
-            $itemId,
-            $normName !== '' ? 'name:' . $normName : '',
-            $tokens   !== '' ? 'tokens:' . $tokens  : '',
-        ]) as $key) {
-            foreach ($index[$key] ?? [] as $rec) {
-                $id = $rec['invoice_id'] ?? '';
-                if ($id !== '' && !isset($seen[$id]) && ($rec['date'] ?? '') >= $dateFrom) {
-                    $invoiceIds[] = $id;
-                    $seen[$id]    = true;
-                }
-            }
-        }
-    }
-
-    // --- Source 2: item_id filter (2-5 API calls, linked items only) ---
-    if (empty($invoiceIds)) {
-        $list = books_paginate($token, '/invoices', 'invoices', [
-            'filter_by'  => 'Status.Paid',
-            'item_id'    => $itemId,
-            'date_start' => $dateFrom,
-            'per_page'   => 200,
-        ]);
-        foreach ($list as $stub) {
-            $id = $stub['invoice_id'] ?? '';
-            if ($id !== '') $invoiceIds[] = $id;
-        }
-    }
-
-    if (empty($invoiceIds)) return [];
-
-    $result = [];
-
-    // --- Serve already-cached invoice details without an API call ---
-    // Shares the same cache key as the books_invoice_detail endpoint (1-hour TTL).
-    $toFetch = [];
-    foreach (array_unique($invoiceIds) as $invoiceId) {
-        $detailCache = new ApiCache("books_invoice_detail_{$invoiceId}");
-        if ($detailCache->isValid(3600)) {
-            $inv = $detailCache->read();
-            if (!empty($inv)) {
-                $bestScore = 0;
-                $bestLi    = null;
-                foreach ($inv['line_items'] ?? [] as $li) {
-                    $score = books_matchLineItem($li, $itemId, $normName, $tokens);
-                    if ($score > $bestScore) {
-                        $bestScore = $score;
-                        $bestLi    = $li;
-                        if ($score === 4) break;
-                    }
-                }
-                if ($bestLi !== null && $bestScore > 0) {
-                    $result[] = [
-                        'invoice_id'     => $inv['invoice_id']     ?? '',
-                        'invoice_number' => $inv['invoice_number'] ?? '',
-                        'date'           => $inv['date']           ?? '',
-                        'customer_name'  => $inv['customer_name']  ?? '',
-                        'status'         => $inv['status']         ?? '',
-                        'quantity'       => (float)($bestLi['quantity']  ?? 1),
-                        'price'          => (float)($bestLi['rate']       ?? 0),
-                        'total'          => (float)($bestLi['item_total'] ?? $bestLi['rate'] ?? 0),
-                    ];
-                }
-                continue;
-            }
-        }
-        $toFetch[] = $invoiceId;
-    }
-
-    // --- Fetch details in batches of 5 (safe under Zoho's rate limit) ---
-    $dailyQuotaHit = false;
-    foreach (array_chunk($toFetch, 5) as $chunkIdx => $chunk) {
-        if ($dailyQuotaHit) break;
-        if ($chunkIdx > 0) sleep(1); // brief pause between batches
-
-        $pending = array_values($chunk);
-
-        for ($attempt = 0; $attempt < 2 && !empty($pending) && !$dailyQuotaHit; $attempt++) {
-            if ($attempt > 0) sleep(10);
-
-            $mh      = curl_multi_init();
-            $handles = [];
-
-            foreach ($pending as $invoiceId) {
-                $ch = curl_init(
-                    "{$baseUrl}/invoices/" . rawurlencode($invoiceId)
-                    . '?' . http_build_query(['organization_id' => $orgId])
-                );
-                curl_setopt_array($ch, [
-                    CURLOPT_RETURNTRANSFER => true,
-                    CURLOPT_TIMEOUT        => 20,
-                    CURLOPT_SSL_VERIFYPEER => true,
-                    CURLOPT_HTTPHEADER     => [
-                        'Authorization: Zoho-oauthtoken ' . $token,
-                        'Accept: application/json',
-                    ],
-                ]);
-                curl_multi_add_handle($mh, $ch);
-                $handles[spl_object_id($ch)] = ['ch' => $ch, 'invoice_id' => $invoiceId];
-            }
-
-            do { curl_multi_exec($mh, $running); curl_multi_select($mh); } while ($running > 0);
-
-            $pending = [];
-
-            foreach ($handles as ['ch' => $ch, 'invoice_id' => $invoiceId]) {
-                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-                $body     = curl_multi_getcontent($ch);
-                curl_multi_remove_handle($mh, $ch);
-
-                if ($httpCode === 429) {
-                    $bodyJson = json_decode($body, true);
-                    if (isset($bodyJson['code']) && (int)$bodyJson['code'] === 45) {
-                        $dailyQuotaHit = true; // daily limit — stop all fetching
-                    } else {
-                        $pending[] = $invoiceId; // transient throttle — retry
-                    }
-                    continue;
-                }
-                if ($httpCode !== 200) continue;
-
-                $decoded = json_decode($body, true);
-                // Code 44 = org rate block — queue for retry.
-                if (isset($decoded['code']) && (int)$decoded['code'] === 44) {
-                    $pending[] = $invoiceId;
-                    continue;
-                }
-
-                $inv = $decoded['invoice'] ?? [];
-                if (empty($inv)) continue;
-
-                // Cache this invoice detail so future lookups (same or other employees) skip the API call.
-                (new ApiCache("books_invoice_detail_{$invoiceId}"))->write($inv);
-
-                $bestScore = 0;
-                $bestLi    = null;
-                foreach ($inv['line_items'] ?? [] as $li) {
-                    $score = books_matchLineItem($li, $itemId, $normName, $tokens);
-                    if ($score > $bestScore) {
-                        $bestScore = $score;
-                        $bestLi    = $li;
-                        if ($score === 4) break;
-                    }
-                }
-
-                if ($bestLi === null || $bestScore === 0) continue;
-
-                $result[] = [
-                    'invoice_id'     => $inv['invoice_id']     ?? '',
-                    'invoice_number' => $inv['invoice_number'] ?? '',
-                    'date'           => $inv['date']           ?? '',
-                    'customer_name'  => $inv['customer_name']  ?? '',
-                    'status'         => $inv['status']         ?? '',
-                    'quantity'       => (float)($bestLi['quantity']  ?? 1),
-                    'price'          => (float)($bestLi['rate']       ?? 0),
-                    'total'          => (float)($bestLi['item_total'] ?? $bestLi['rate'] ?? 0),
-                ];
-            }
-
-            curl_multi_close($mh);
-        }
-    }
-
-    usort($result, fn($a, $b) => strcmp($b['date'], $a['date']));
-    return $result;
-}
-
-/**
- * Score how well a line item matches a target item.
- *
- * 4 = exact item_id match (definitive)
- * 3 = exact normalised name match
- * 2 = all sorted-word tokens match (word-order insensitive)
- * 1 = majority token overlap (handles partial name variations)
- * 0 = no match
- */
-function books_matchLineItem(array $li, string $itemId, string $normName, string $tokens): int
-{
-    if ($itemId !== '' && (string)($li['item_id'] ?? '') === $itemId) {
-        return 4;
-    }
-    $liNorm = books_normalise_name($li['name'] ?? '');
-    if ($normName !== '' && $liNorm === $normName) {
-        return 3;
-    }
-    $liTokens = books_name_tokens($li['name'] ?? '');
-    if ($tokens !== '' && $liTokens !== '' && $liTokens === $tokens) {
-        return 2;
-    }
-    if ($tokens !== '' && $liTokens !== '') {
-        $tArr    = explode('|', $tokens);
-        $liArr   = explode('|', $liTokens);
-        $overlap = count(array_intersect($tArr, $liArr));
-        $minLen  = min(count($tArr), count($liArr));
-        if ($minLen > 0 && $overlap >= (int)ceil($minLen / 2)) {
-            return 1;
-        }
-    }
-    return 0;
+    return array_values(array_filter($invoices, fn($inv) => strtolower($inv['status'] ?? '') === 'paid'));
 }
 
 function books_getInvoiceDetail(string $token, string $invoiceId): array
@@ -833,50 +370,6 @@ function books_getRecurringByItem(string $token, string $itemId): array
 // -----------------------------------------------------------------------------
 // Internal helpers
 // -----------------------------------------------------------------------------
-
-/**
- * Normalise an item/line-item name for reliable index matching.
- *
- * Handles the most common variations seen in Zoho Books exports:
- *  - Mixed case          → lowercase
- *  - Leading/trailing whitespace → trimmed
- *  - Multiple spaces     → single space
- *  - " & " / " and "    → normalised to " & " (canonical form)
- *  - Full-width spaces / non-breaking spaces → regular space
- */
-function books_normalise_name(string $name): string
-{
-    $name = mb_strtolower(trim($name));
-    // Collapse all whitespace variants to a single space.
-    $name = preg_replace('/[\s\
-    x{00A0}\x{200B}]+/u', ' ', $name);
-    // Normalise "and" (whole word, surrounded by spaces) to "&".
-    $name = preg_replace('/\band\b/', '&', $name);
-    // Collapse any spaces that now surround "&"  →  " & ".
-    $name = preg_replace('/\s*&\s*/', ' & ', $name);
-    return trim($name);
-}
-
-/**
- * Reduce a name to a canonical sorted-word token string.
- *
- * Strips all punctuation, removes common stop-words, sorts the remaining
- * words alphabetically, and joins with "|".  This lets us match names
- * regardless of word order or minor punctuation differences.
- *
- * e.g. "Kumar, Ben and Christie"  → "ben|christie|kumar"
- *      "Ben Kumar & Christie"     → "ben|christie|kumar"
- *      "Kumar Ben & Christie"     → "ben|christie|kumar"
- */
-function books_name_tokens(string $name): string
-{
-    static $stopWords = ['and', 'or', 'the', 'of', 'for', 'in', 'a', 'an', 'mr', 'mrs', 'ms', 'dr'];
-    $name = mb_strtolower($name);
-    preg_match_all('/[a-z]{2,}/u', $name, $m);
-    $words = array_filter($m[0], fn($w) => !in_array($w, $stopWords));
-    sort($words);
-    return implode('|', array_values($words));
-}
 
 /**
  * Paginate through a Zoho Books endpoint, accumulating all records.

@@ -2,8 +2,7 @@
 /**
  * Central API proxy — the only endpoint the browser calls.
  *
- * Responses are served from a flat-file cache when a TTL is set for the
- * endpoint; otherwise every request goes directly to the Zoho API.
+ * Every request goes directly to the Zoho API — no server-side caching.
  *
  * Usage:
  *   GET proxy.php?endpoint=<key>
@@ -19,7 +18,6 @@
 
 require_once __DIR__ . '/../lib/helpers.php';
 require_once __DIR__ . '/../lib/ZohoOAuth.php';
-require_once __DIR__ . '/../lib/ApiCache.php';
 require_once __DIR__ . '/books.php';
 require_once __DIR__ . '/crm.php';
 
@@ -31,23 +29,21 @@ require_once __DIR__ . '/crm.php';
 // ---------------------------------------------------------------------------
 const ENDPOINTS = [
     'books_invoices'             => ['fn' => 'books_getInvoices'],
-    'books_recurring'            => ['fn' => 'books_getRecurringInvoices',   'ttl' => 1800],
-    'books_recurring_all'        => ['fn' => 'books_getAllRecurringInvoices', 'ttl' => 1800],
+    'books_recurring'            => ['fn' => 'books_getRecurringInvoices'],
+    'books_recurring_all'        => ['fn' => 'books_getAllRecurringInvoices'],
     'books_accounts'             => ['fn' => 'books_getAccounts'],
-    'books_items'                => ['fn' => 'books_getItems',               'ttl' => 3600],
-    'books_item_detail'          => ['fn' => 'books_getItemDetail',          'param' => 'item_id',             'ttl' => 3600],
-    'books_item_customfields'    => ['fn' => 'books_getItemCustomFields',                                      'ttl' => 14400],
-    'books_contact_detail'       => ['fn' => 'books_getContactDetail',       'param' => 'contact_id',          'ttl' => 3600],
-    'books_employee_contact'     => ['fn' => 'books_getEmployeeContact',     'param' => 'item_id',             'ttl' => 3600],
-    'books_item_invoice_status'  => ['fn' => 'books_getItemInvoiceStatus'],
-    'books_invoice_index'        => ['fn' => 'books_getInvoiceIndex',                                         'ttl' => 14400],
+    'books_items'                => ['fn' => 'books_getItems'],
+    'books_item_detail'          => ['fn' => 'books_getItemDetail',          'param' => 'item_id'],
+    'books_item_customfields'    => ['fn' => 'books_getItemCustomFields'],
+    'books_contact_detail'       => ['fn' => 'books_getContactDetail',       'param' => 'contact_id'],
+    'books_employee_contact'     => ['fn' => 'books_getEmployeeContact',     'param' => 'item_id'],
     'books_items_pm_map'         => ['fn' => 'books_getItemsPmMap'],
     'books_contacts'             => ['fn' => 'books_getContacts'],
-    'books_invoices_by_item'     => ['fn' => 'books_getInvoicesByItem',      'param' => 'item_id',             'ttl' => 1800],
-    'books_invoice_detail'       => ['fn' => 'books_getInvoiceDetail',       'param' => 'invoice_id',          'ttl' => 3600],
-    'books_invoice_transactions' => ['fn' => 'books_getInvoiceTransactions', 'param' => 'item_id',             'ttl' => 3600],
-    'books_recurring_by_item'    => ['fn' => 'books_getRecurringByItem',     'param' => 'item_id',             'ttl' => 1800],
-    'books_recurring_detail'     => ['fn' => 'books_getRecurringDetail',     'param' => 'recurring_invoice_id','ttl' => 1800],
+    'books_invoices_by_item'     => ['fn' => 'books_getInvoicesByItem',      'param' => 'item_id'],
+    'books_invoice_detail'       => ['fn' => 'books_getInvoiceDetail',       'param' => 'invoice_id'],
+    'books_invoice_transactions' => ['fn' => 'books_getInvoiceTransactions', 'param' => 'item_id'],
+    'books_recurring_by_item'    => ['fn' => 'books_getRecurringByItem',     'param' => 'item_id'],
+    'books_recurring_detail'     => ['fn' => 'books_getRecurringDetail',     'param' => 'recurring_invoice_id'],
     'crm_contacts'               => ['fn' => 'crm_getContacts'],
     'crm_employees'              => ['fn' => 'crm_getEmployees'],
     'crm_accounts'               => ['fn' => 'crm_getAccounts'],
@@ -175,20 +171,6 @@ if (!empty($spec['param'])) {
 }
 
 // ---------------------------------------------------------------------------
-// Cache check — serve from disk if fresh
-// ---------------------------------------------------------------------------
-
-$ttl      = (int)($spec['ttl'] ?? 0);
-$cacheKey = $ttl > 0 ? $endpointKey . ($param !== '' ? '_' . $param : '') : null;
-
-if ($cacheKey !== null) {
-    $cache = new ApiCache($cacheKey);
-    if ($cache->isValid($ttl)) {
-        json_response(['source' => 'cache', 'data' => $cache->read()]);
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Fetch from Zoho API
 // ---------------------------------------------------------------------------
 
@@ -207,13 +189,6 @@ try {
 } catch (RuntimeException $e) {
     error_log("Proxy upstream error [{$endpointKey}]: " . $e->getMessage());
     json_response(['error' => 'upstream_error'], 502);
-}
-
-// Don't cache empty transaction results — an empty array often means the invoice
-// index hasn't been built yet, not that there are genuinely no transactions.
-$skipCache = $endpointKey === 'books_invoice_transactions' && empty($data);
-if ($cacheKey !== null && !$skipCache) {
-    (new ApiCache($cacheKey))->write($data);
 }
 
 json_response(['source' => 'api', 'data' => $data]);

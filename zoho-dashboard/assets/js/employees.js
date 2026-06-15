@@ -184,11 +184,6 @@ $(function () {
         const $detail = $('#app-detail');
         $detail.html('<div class="detail-loading"><span class="spinner"></span></div>');
 
-        // Start accurate transactions fetch immediately so it runs in parallel with
-        // everything else. We do NOT wait for it before rendering — it is used in
-        // two ways after the Overview is already visible:
-        //  1. Silently re-draw charts with correct per-line-item amounts.
-        //  2. Serve the Transactions tab instantly (already resolved by then).
         const transactionsReq = apiGet(
             PROXY + '?endpoint=books_invoice_transactions&item_id=' + encodeURIComponent(itemId)
         );
@@ -864,24 +859,34 @@ $(function () {
         // Populate the Overview attachments strip.
         loadOvAttachments(item.item_id);
 
-        // When accurate per-line-item transactions resolve in the background,
-        // silently re-draw the charts with correct figures.
-        transactionsReq.done(function (txnRes) {
-            if (!document.getElementById('rpt-balance')) return; // user navigated away
-            const transactions = txnRes.data || [];
-            const rptAccurate  = buildReportData(transactions, msrMonthlyRequired);
-            initReportCharts(rptAccurate);
-            $('#ov-monthly-avg').text(formatCurrency(rptAccurate.monthlyAvg));
-            const deficit = (msrMonthlyRequired || 0) - rptAccurate.monthlyAvg;
-            $('#ov-avg-deficit').text(formatCurrency(deficit))
-                .toggleClass('kpi-deficit', deficit > 0)
-                .toggleClass('kpi-surplus', deficit <= 0);
-        });
+        // Load transactions immediately when employee is selected.
+        // When resolved, also re-draw Overview charts with item-filtered data.
+        const $txnPane = $('#tab-transactions');
+        $txnPane.html('<div class="detail-loading"><span class="spinner"></span></div>');
+        transactionsReq
+            .done(function (txnRes) {
+                const cutoff = new Date();
+                cutoff.setMonth(cutoff.getMonth() - 12);
+                const transactions = (txnRes.data || []).filter(function (inv) {
+                    return inv.date && new Date(inv.date) >= cutoff;
+                });
+                renderTransactionsTab($txnPane, transactions);
 
-        // Tab switching — load transactions, support and flow lazily on first click.
-        let transactionsReady = false;
-        let supportReady      = false;
-        let flowReady         = false;
+                // Re-draw Balance Trend and Income by Month with item-specific figures.
+                if (!document.getElementById('rpt-balance')) return;
+                const rptAccurate = buildReportData(transactions, msrMonthlyRequired);
+                initReportCharts(rptAccurate);
+                $('#ov-monthly-avg').text(formatCurrency(rptAccurate.monthlyAvg));
+                const deficit = (msrMonthlyRequired || 0) - rptAccurate.monthlyAvg;
+                $('#ov-avg-deficit').text(formatCurrency(deficit))
+                    .toggleClass('kpi-deficit', deficit > 0)
+                    .toggleClass('kpi-surplus', deficit <= 0);
+            })
+            .fail(function () { $txnPane.html('<p class="detail-empty-msg error-msg">Failed to load transactions. Try refreshing.</p>'); });
+
+        // Tab switching — support and flow load lazily on first click.
+        let supportReady = false;
+        let flowReady    = false;
         $detail.find('.tab-btn').on('click', function () {
             const tab = $(this).data('tab');
             $detail.find('.tab-btn').removeClass('is-active');
@@ -889,17 +894,6 @@ $(function () {
             $detail.find('.tab-pane').addClass('is-hidden');
             $('#tab-' + tab).removeClass('is-hidden');
 
-            if (tab === 'transactions' && !transactionsReady) {
-                transactionsReady = true;
-                const $pane = $('#tab-transactions');
-                $pane.html('<div class="detail-loading"><span class="spinner"></span></div>');
-                transactionsReq
-                    .done(function (txnRes) {
-                        const transactions = txnRes.data || [];
-                        renderTransactionsTab($pane, transactions);
-                    })
-                    .fail(function () { $pane.html('<p class="detail-empty-msg error-msg">Failed to load transactions. Try refreshing.</p>'); });
-            }
             if (tab === 'support' && !supportReady) {
                 supportReady = true;
                 renderSupportTab($('#tab-support'), item, msrMonthlyRequired);
@@ -1016,7 +1010,7 @@ $(function () {
 
         if (rows_data.length === 0) {
             $('#txn-tab-count').text('0');
-            $pane.html('<p class="detail-empty-msg">No paid invoices found for this employee in the last 12 months.</p>');
+            $pane.html('<p class="detail-empty-msg">No paid invoices found for this employee.</p>');
             return;
         }
 
@@ -1057,8 +1051,6 @@ $(function () {
                 <td>${escHtml(inv.invoice_number || '—')}</td>
                 <td>${escHtml(inv.customer_name || '—')}</td>
                 <td>${statusBadge(inv.status)}</td>
-                <td class="amount-cell">${parseFloat(inv.quantity || 1).toFixed(2)}</td>
-                <td class="amount-cell">${formatCurrency(inv.price || 0)}</td>
                 <td class="amount-cell">${formatCurrency(inv.total || 0)}</td>
             </tr>`).join('');
         }
@@ -1100,13 +1092,11 @@ $(function () {
                         <th class="txn-th-sort" data-sort="num">Invoice #</th>
                         <th class="txn-th-sort" data-sort="cust">Customer Name</th>
                         <th>Status</th>
-                        <th class="amount-cell">Qty</th>
-                        <th class="amount-cell">Price</th>
                         <th class="amount-cell txn-th-sort" data-sort="total">Total</th>
                     </tr></thead>
                     <tbody>${buildRows(sortedData())}</tbody>
                     <tfoot><tr class="total-row">
-                        <td colspan="6">Total</td>
+                        <td colspan="4">Total</td>
                         <td class="amount-cell txn-total">${formatCurrency(total)}</td>
                     </tr></tfoot>
                 </table>
