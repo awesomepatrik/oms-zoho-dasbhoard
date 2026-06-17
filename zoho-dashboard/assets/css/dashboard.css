@@ -990,6 +990,7 @@ body.app-body {
     .overview-grid { grid-template-columns: 1fr; }
     .site-header h1 { font-size: 1rem; }
     .report-charts-row { grid-template-columns: 1fr; }
+
 }
 
 /* ---------------------------------------------------------
@@ -1450,6 +1451,7 @@ body.app-body {
         border-right: none;
         border-bottom: 1px solid var(--colour-border);
     }
+
 }
 
 /* ==========================================================
@@ -1465,8 +1467,17 @@ body.app-body {
 }
 #tab-flow.is-hidden { display: none; }
 
-/* Section wrapper (employee / PM) */
+/* Section wrapper — side-by-side layout */
 .flow-section {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 1.25rem;
+}
+
+.flow-uploader-panel {
+    flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
@@ -1642,6 +1653,239 @@ body.app-body {
 }
 .flow-card:hover .flow-del-btn { display: flex; }
 .flow-del-btn:hover { background: #ef4444; }
+
+/* ==========================================================
+   Flow tab — Flow Details editable table
+   ========================================================== */
+
+.flow-details-wrap {
+    flex: none;
+    width: auto;
+    align-self: flex-start;
+    border: 1px solid var(--colour-border);
+    border-radius: var(--radius);
+    background: var(--colour-card);
+    overflow: hidden;
+    margin-bottom: 0.75rem;
+}
+
+.flow-details-hd {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--colour-bg);
+    border-bottom: 1px solid var(--colour-border);
+}
+
+.flow-details-title {
+    flex: 1;
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--colour-primary);
+}
+
+.flow-details-actions {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+}
+
+.fd-add-row, .fd-add-section, .fd-save {
+    padding: 3px 10px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    border-radius: 5px;
+    border: 1px solid var(--colour-border);
+    cursor: pointer;
+    transition: background 0.12s;
+}
+
+.fd-add-row, .fd-add-section {
+    background: var(--colour-card);
+    color: var(--colour-text);
+}
+.fd-add-row:hover, .fd-add-section:hover { background: var(--colour-border); }
+
+.fd-save {
+    background: var(--colour-primary);
+    color: #fff;
+    border-color: var(--colour-primary);
+}
+.fd-save:hover { opacity: 0.88; }
+.fd-save:disabled { opacity: 0.55; cursor: default; }
+
+.fd-save-status {
+    font-size: 0.78rem;
+    padding: 0.25rem 0.75rem;
+    min-height: 1.4em;
+}
+.fd-status-ok  { color: var(--colour-success); }
+.fd-status-err { color: var(--colour-danger); }
+
+.flow-details-body {
+    overflow-x: auto;
+    max-height: 520px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--colour-border) transparent;
+}
+.flow-details-body::-webkit-scrollbar { width: 5px; }
+.flow-details-body::-webkit-scrollbar-thumb { background: var(--colour-border); border-radius: 3px; }
+
+.fd-table {
+    width: auto;
+    border-collapse: collapse;
+    font-size: 0.84rem;
+    table-layout: auto;
+    border: 1px solid var(--colour-border);
+}
+
+.fd-table tbody tr { background: none; }
+.fd-table tbody tr:hover { background: rgba(37,99,235,0.04); }
+
+/* Section header row (person name) — bold, no cell borders */
+.fd-header-row { background: none !important; }
+
+.fd-table .fd-header-cell {
+    font-weight: 700;
+    font-size: 0.88rem;
+    color: var(--colour-text);
+    padding: 10px 10px 6px !important;
+    border: none !important;
+}
+
+/* Spacer row between sections */
+.fd-spacer-row td {
+    height: 8px;
+    border: none !important;
+    background: var(--colour-bg) !important;
+    padding: 0 !important;
+}
+
+/* Separator line above every section header except the very first */
+.fd-table tbody tr + tr.fd-header-row .fd-header-cell {
+    border-top: 2px solid var(--colour-border) !important;
+    padding-top: 16px !important;
+}
+
+/* Data cells — grid borders on all sides */
+.fd-table td {
+    padding: 4px 10px;
+    border: 1px solid var(--colour-border);
+    color: var(--colour-text);
+    font-weight: normal;
+    outline: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Value column — give it a comfortable min-width for short entries */
+.fd-table td:nth-child(3) { min-width: 80px; }
+
+/* Right-align numeric values */
+.fd-val-num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.fd-table td[contenteditable]:focus {
+    outline: 2px solid var(--colour-secondary);
+    outline-offset: -2px;
+    border-radius: 2px;
+    background: #fff;
+    position: relative;
+    z-index: 1;
+    white-space: normal;
+    overflow: visible;
+}
+
+.fd-row-actions {
+    width: 16px;
+    text-align: center;
+    padding: 0 !important;
+    border: none !important;
+    white-space: nowrap;
+}
+
+.fd-del-row-btn {
+    display: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+    border: none;
+    background: rgba(0,0,0,0.07);
+    color: var(--colour-muted);
+    font-size: 0.6rem;
+    line-height: 1;
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    vertical-align: middle;
+}
+.fd-table tbody tr:hover .fd-del-row-btn { display: inline-flex; }
+.fd-del-row-btn:hover { background: #ef4444; color: #fff; }
+
+.fd-drag-col {
+    width: 8px;
+    padding: 0 !important;
+    border: none !important;
+    text-align: center;
+    vertical-align: middle;
+}
+.fd-drag-handle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 8px;
+    height: 20px;
+    cursor: grab;
+    color: #c0c0c0;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+.fd-table tbody tr:hover .fd-drag-handle { opacity: 1; }
+.fd-drag-handle:active { cursor: grabbing; }
+.fd-dragging td { opacity: 0.4; }
+.fd-drop-above td { box-shadow: 0 -2px 0 0 var(--colour-secondary); }
+.fd-drop-below td { box-shadow: 0 2px 0 0 var(--colour-secondary); }
+
+/* Flow tab — responsive (must come after base flow CSS) */
+@media (max-width: 700px) {
+    .flow-section {
+        flex-direction: column;
+    }
+    .flow-details-wrap,
+    .flow-uploader-panel {
+        flex: none;
+        width: 100%;
+    }
+    .flow-details-body {
+        max-height: 360px;
+    }
+    .flow-details-hd {
+        flex-wrap: wrap;
+        gap: 0.4rem 0.5rem;
+    }
+    .flow-details-title {
+        flex: 1 1 100%;
+    }
+    .fd-table { font-size: 0.78rem; }
+    .fd-table td { padding: 4px 6px; }
+}
+
+@media (max-width: 500px) {
+    #tab-flow { padding: 0.6rem; gap: 0.6rem; }
+    .flow-details-body { max-height: 280px; }
+    .fd-add-row, .fd-add-section, .fd-save {
+        padding: 3px 7px;
+        font-size: 0.72rem;
+    }
+    .fd-table { font-size: 0.74rem; }
+    .fd-table td { padding: 3px 5px; }
+    .fd-table td:nth-child(3) { width: 28%; }
+}
 
 /* ==========================================================
    Overview — attachment strip (compact)

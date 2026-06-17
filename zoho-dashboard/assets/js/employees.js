@@ -460,22 +460,8 @@ $(function () {
 
         // ----- Reports tab -----
         const rpt = buildReportData(invoices, msrMonthlyRequired);
-        const currentYear = new Date().getFullYear();
-        const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-
         // Pre-build income trend table rows
-        let cumSum = 0;
-        const incomeTblRows = MONTHS.map((lbl, i) => {
-            const inc = rpt.monthlyIncome[i];
-            cumSum += inc;
-            const incStr = inc    > 0 ? formatCurrency(inc)    : '\u2014';
-            const cumStr = cumSum > 0 ? formatCurrency(cumSum) : '\u2014';
-            return `<tr>
-                <td>${lbl}</td>
-                <td class="amount-cell">${escHtml(incStr)}</td>
-                <td class="amount-cell">${escHtml(cumStr)}</td>
-            </tr>`;
-        }).join('');
+        const incomeTblRows = buildIncomeTblRows(rpt);
 
         // ---- Build full detail HTML ----
         $detail.html(`
@@ -528,9 +514,9 @@ $(function () {
                     <div class="reports-layout">
 
                         <section class="report-section">
-                            <h3 class="report-title">Income Trend \u2014 ${currentYear}</h3>
+                            <h3 class="report-title">Income Trend \u2014 Last 12 Months</h3>
                             <div class="detail-table-wrap">
-                                <table class="data-table">
+                                <table class="data-table" id="ov-income-tbl">
                                     <thead><tr>
                                         <th>Month</th>
                                         <th class="amount-cell">Income</th>
@@ -539,8 +525,8 @@ $(function () {
                                     <tbody>${incomeTblRows}</tbody>
                                     <tfoot><tr class="total-row">
                                         <td>Total</td>
-                                        <td class="amount-cell">${escHtml(formatCurrency(rpt.yearTotal))}</td>
-                                        <td class="amount-cell">${escHtml(formatCurrency(rpt.yearTotal))}</td>
+                                        <td class="amount-cell" id="ov-income-total">${escHtml(formatCurrency(rpt.yearTotal))}</td>
+                                        <td class="amount-cell" id="ov-income-cumtotal">${escHtml(formatCurrency(rpt.yearTotal))}</td>
                                     </tr></tfoot>
                                 </table>
                             </div>
@@ -573,12 +559,12 @@ $(function () {
                                 <dl class="report-pie-stats">
                                     <dt>Yearly Support Target</dt>
                                     <dd>${escHtml(formatCurrency(rpt.totalYearlySupport))}</dd>
-                                    <dt>Avg Annual Income</dt>
-                                    <dd>${escHtml(formatCurrency(rpt.avgAnnualIncome))}</dd>
+                                    <dt>Last 12 Months Income</dt>
+                                    <dd id="ov-funding-income">${escHtml(formatCurrency(rpt.yearTotal))}</dd>
                                     <dt>Funded</dt>
-                                    <dd class="report-stat-funded">${rpt.percentFunded.toFixed(1)}%</dd>
+                                    <dd id="ov-funding-pct" class="report-stat-funded">${rpt.percentFunded.toFixed(1)}%</dd>
                                     <dt>Outstanding</dt>
-                                    <dd class="report-stat-outstanding">${rpt.percentOutstanding.toFixed(1)}%</dd>
+                                    <dd id="ov-outstanding-pct" class="report-stat-outstanding">${rpt.percentOutstanding.toFixed(1)}%</dd>
                                 </dl>
                             </div>
                         </section>
@@ -876,6 +862,11 @@ $(function () {
                 if (!document.getElementById('rpt-balance')) return;
                 const rptAccurate = buildReportData(transactions, msrMonthlyRequired);
                 initReportCharts(rptAccurate);
+                $('#ov-income-tbl tbody').html(buildIncomeTblRows(rptAccurate));
+                $('#ov-income-total, #ov-income-cumtotal').text(formatCurrency(rptAccurate.yearTotal));
+                $('#ov-funding-income').text(formatCurrency(rptAccurate.yearTotal));
+                $('#ov-funding-pct').text(rptAccurate.percentFunded.toFixed(1) + '%');
+                $('#ov-outstanding-pct').text(rptAccurate.percentOutstanding.toFixed(1) + '%');
                 $('#ov-monthly-avg').text(formatCurrency(rptAccurate.monthlyAvg));
                 const deficit = (msrMonthlyRequired || 0) - rptAccurate.monthlyAvg;
                 $('#ov-avg-deficit').text(formatCurrency(deficit))
@@ -1352,44 +1343,234 @@ $(function () {
         return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="flow-file-icon"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>';
     }
 
+    // ── Flow Details CSV helpers ──────────────────────────────────────────────
+
+    function parseFlowCsv(raw) {
+        if (!raw) return [];
+        // Zoho Books multiline fields may return HTML — normalise to plain text
+        let text = raw;
+        if (text.includes('<')) {
+            text = text.replace(/<br\s*\/?>/gi, '\n')
+                       .replace(/<\/p>/gi, '\n')
+                       .replace(/<\/div>/gi, '\n');
+            const tmp = document.createElement('div');
+            tmp.innerHTML = text;
+            text = tmp.textContent || tmp.innerText || '';
+        }
+        const rows = [];
+        const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+        for (let i = 0; i < lines.length; i++) {
+            if (i === lines.length - 1 && lines[i].trim() === '') break;
+            const line = lines[i];
+            const comma = line.indexOf(',');
+            if (comma === -1) {
+                rows.push([line, '']);
+            } else {
+                rows.push([line.slice(0, comma), line.slice(comma + 1)]);
+            }
+        }
+        return rows;
+    }
+
+    function serializeFlowCsv(rows) {
+        return rows.map(function (r) {
+            if (r[0] === '' && r[1] === '') return '';
+            return r[0] + ',' + r[1];
+        }).join('\n');
+    }
+
     function renderFlowTab($pane, item, contact) {
         const pmCf   = (item.custom_fields || []).find(f => (f.label || '').toLowerCase() === 'project manager');
         const pmId   = pmCf ? String(pmCf.value || '').trim() : '';
         const pmName = pmId ? (contact && (contact.contact_name || contact.display_name || '')) || 'Project Manager' : '';
 
-        if (!pmId) {
+        // Flow Details custom field (CSV stored on the item itself)
+        const flowCf    = (item.custom_fields || []).find(function (f) {
+            const lbl = (f.label || '').toLowerCase();
+            return lbl.includes('flow') && lbl.includes('detail');
+        });
+        const flowFldId = flowCf ? String(flowCf.customfield_id || flowCf.field_id || '').trim() : '';
+        const flowCsv   = flowCf ? String(flowCf.value || '').trim() : '';
+
+        if (!pmId && !flowCf) {
             $('#flow-tab-count').text('');
             $pane.html('<p class="detail-empty-msg">No project manager is assigned to this employee.</p>');
             return;
         }
 
-        $pane.html(`<div class="flow-section">
-            <div class="flow-section-hd">
-                <span class="flow-section-title">${escHtml(pmName)}</span>
-                <span class="flow-section-count"></span>
-            </div>
-            <div class="flow-upload-zone flow-dropzone">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="flow-zone-icon">
-                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-                    <polyline points="17 8 12 3 7 8"/>
-                    <line x1="12" y1="3" x2="12" y2="15"/>
-                </svg>
-                <p class="flow-zone-label">Drop files here or
-                    <label for="flow-file-pm" class="flow-zone-link">click to upload</label>
-                </p>
-                <p class="flow-zone-hint">Images, PDF, Word, Excel &bull; Max 10 MB each</p>
-                <input type="file" id="flow-file-pm" class="flow-file-input" multiple
-                       accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
-                       style="display:none">
-            </div>
-            <div class="flow-progress" style="display:none"></div>
-            <div class="flow-list">
-                <div class="detail-loading"><span class="spinner"></span></div>
-            </div>
-        </div>`);
+        // Build Flow Details table HTML
+        const flowDetailsHtml = flowCf ? (function () {
+            const rows = parseFlowCsv(flowCsv);
+            // Section header: col2 empty AND col1 is a plain name (letters/spaces/& only)
+            const namePattern = /^[A-Za-z\s&']+$/;
+            const grip    = `<td class="fd-drag-col"><span class="fd-drag-handle" title="Drag to reorder"><svg width="8" height="14" viewBox="0 0 8 14" fill="currentColor"><circle cx="2" cy="2" r="1.4"/><circle cx="6" cy="2" r="1.4"/><circle cx="2" cy="7" r="1.4"/><circle cx="6" cy="7" r="1.4"/><circle cx="2" cy="12" r="1.4"/><circle cx="6" cy="12" r="1.4"/></svg></span></td>`;
+            const actions = `<td class="fd-row-actions"><button class="fd-del-row-btn" title="Delete">&times;</button></td>`;
+            const tbodyHtml = rows.map(function (r) {
+                // Blank row → thin spacer
+                if (r[0].trim() === '' && r[1].trim() === '') {
+                    return '<tr class="fd-spacer-row"><td colspan="4"></td></tr>';
+                }
+                // Section header (person name)
+                if (r[1] === '' && r[0].trim() !== '' && namePattern.test(r[0].trim())) {
+                    return `<tr class="fd-header-row">${grip}<td class="fd-header-cell" colspan="2" contenteditable="true">${escHtml(r[0])}</td>${actions}</tr>`;
+                }
+                // Data row — right-align purely numeric values
+                const valClass = /^[\d,./\-]+$/.test(r[1].trim()) ? ' class="fd-val-num"' : '';
+                return `<tr>${grip}<td contenteditable="true">${escHtml(r[0])}</td><td contenteditable="true"${valClass}>${escHtml(r[1])}</td>${actions}</tr>`;
+            }).join('');
+            return `<div class="flow-details-wrap">
+                <div class="flow-details-hd">
+                    <span class="flow-details-title">Flow Details</span>
+                    <div class="flow-details-actions">
+                        <button class="fd-add-section" type="button">+ Section</button>
+                        <button class="fd-add-row" type="button">+ Row</button>
+                        <button class="fd-save" type="button">Save</button>
+                    </div>
+                </div>
+                <div class="flow-details-body">
+                    <table class="fd-table">
+                        <tbody>${tbodyHtml}</tbody>
+                    </table>
+                </div>
+                <div class="fd-save-status"></div>
+            </div>`;
+        })() : '';
+
+        const fileUploadHtml = pmId ? `
+            <div class="flow-uploader-panel">
+                <div class="flow-section-hd">
+                    <span class="flow-section-title">${escHtml(pmName)}</span>
+                    <span class="flow-section-count"></span>
+                </div>
+                <div class="flow-upload-zone flow-dropzone">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="flow-zone-icon">
+                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                        <polyline points="17 8 12 3 7 8"/>
+                        <line x1="12" y1="3" x2="12" y2="15"/>
+                    </svg>
+                    <p class="flow-zone-label">Drop files here or
+                        <label for="flow-file-pm" class="flow-zone-link">click to upload</label>
+                    </p>
+                    <p class="flow-zone-hint">Images, PDF, Word, Excel &bull; Max 10 MB each</p>
+                    <input type="file" id="flow-file-pm" class="flow-file-input" multiple
+                           accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
+                           style="display:none">
+                </div>
+                <div class="flow-progress" style="display:none"></div>
+                <div class="flow-list">
+                    <div class="detail-loading"><span class="spinner"></span></div>
+                </div>
+            </div>` : '';
+
+        $pane.html(`<div class="flow-section">${flowDetailsHtml}${fileUploadHtml}</div>`);
 
         const $section = $pane.find('.flow-section');
 
+        // ── Flow Details event handlers ──────────────────────────────────────
+        if (flowCf) {
+            const newGrip    = '<td class="fd-drag-col"><span class="fd-drag-handle" title="Drag to reorder"><svg width="8" height="14" viewBox="0 0 8 14" fill="currentColor"><circle cx="2" cy="2" r="1.4"/><circle cx="6" cy="2" r="1.4"/><circle cx="2" cy="7" r="1.4"/><circle cx="6" cy="7" r="1.4"/><circle cx="2" cy="12" r="1.4"/><circle cx="6" cy="12" r="1.4"/></svg></span></td>';
+            const newActions = '<td class="fd-row-actions"><button class="fd-del-row-btn" title="Delete">&times;</button></td>';
+
+            $section.on('click', '.fd-add-row', function () {
+                const $tbody = $section.find('.fd-table tbody');
+                $tbody.append('<tr>' + newGrip + '<td contenteditable="true"></td><td contenteditable="true"></td>' + newActions + '</tr>');
+                $tbody.find('tr:last-child td[contenteditable]').first().focus();
+            });
+
+            $section.on('click', '.fd-add-section', function () {
+                const $tbody = $section.find('.fd-table tbody');
+                $tbody.append('<tr class="fd-header-row">' + newGrip + '<td class="fd-header-cell" colspan="2" contenteditable="true"></td>' + newActions + '</tr>');
+                $tbody.find('tr:last-child td[contenteditable]').first().focus();
+            });
+
+            $section.on('click', '.fd-del-row-btn', function () {
+                $(this).closest('tr').remove();
+            });
+
+            // ── Drag-and-drop row reordering ─────────────────────────────────
+            let $dragRow = null;
+
+            $section.on('mousedown', '.fd-drag-handle', function () {
+                $(this).closest('tr').attr('draggable', 'true');
+            });
+
+            $section.on('dragstart', '.fd-table tr', function (e) {
+                $dragRow = $(this);
+                e.originalEvent.dataTransfer.effectAllowed = 'move';
+                e.originalEvent.dataTransfer.setData('text/plain', '');
+                setTimeout(function () { $dragRow && $dragRow.addClass('fd-dragging'); }, 0);
+            });
+
+            $section.on('dragover', '.fd-table tr', function (e) {
+                if (!$dragRow || this === $dragRow[0]) return;
+                e.preventDefault();
+                const midY = this.getBoundingClientRect().top + this.getBoundingClientRect().height / 2;
+                const below = e.originalEvent.clientY > midY;
+                $(this).toggleClass('fd-drop-above', !below).toggleClass('fd-drop-below', below);
+            });
+
+            $section.on('dragleave', '.fd-table tr', function () {
+                $(this).removeClass('fd-drop-above fd-drop-below');
+            });
+
+            $section.on('drop', '.fd-table tr', function (e) {
+                if (!$dragRow || this === $dragRow[0]) return;
+                e.preventDefault();
+                const midY = this.getBoundingClientRect().top + this.getBoundingClientRect().height / 2;
+                if (e.originalEvent.clientY > midY) {
+                    $dragRow.insertAfter(this);
+                } else {
+                    $dragRow.insertBefore(this);
+                }
+                $(this).removeClass('fd-drop-above fd-drop-below');
+            });
+
+            $section.on('dragend', '.fd-table tr', function () {
+                $(this).removeClass('fd-dragging').removeAttr('draggable');
+                $section.find('.fd-drop-above, .fd-drop-below').removeClass('fd-drop-above fd-drop-below');
+                $dragRow = null;
+            });
+
+            $section.on('click', '.fd-save', function () {
+                const $btn = $(this).prop('disabled', true).text('Saving…');
+                const $status = $section.find('.fd-save-status');
+                const rows = [];
+                $section.find('.fd-table tbody tr').each(function () {
+                    if ($(this).hasClass('fd-spacer-row')) { rows.push(['', '']); return; }
+                    const $tds = $(this).find('td[contenteditable]');
+                    if ($(this).hasClass('fd-header-row')) {
+                        rows.push([$tds.first().text(), '']);
+                    } else {
+                        rows.push([$tds.eq(0).text(), $tds.eq(1).text()]);
+                    }
+                });
+                const csvValue = serializeFlowCsv(rows);
+                $.ajax({
+                    url: '/oms-zoho-dashboard/zoho-dashboard/api/update_msr.php',
+                    type: 'POST', contentType: 'application/json',
+                    data: JSON.stringify({ item_id: item.item_id, field_id: flowFldId, value: csvValue }),
+                })
+                .done(function (res) {
+                    if (res.success) {
+                        $btn.text('Save');
+                        $status.text('Saved').addClass('fd-status-ok').removeClass('fd-status-err');
+                        setTimeout(function () { $status.text('').removeClass('fd-status-ok'); }, 2000);
+                    } else {
+                        $btn.text('Save');
+                        $status.text(res.error || 'Save failed').addClass('fd-status-err').removeClass('fd-status-ok');
+                    }
+                })
+                .fail(function (jqXHR) {
+                    let msg = 'Save failed';
+                    try { msg = (JSON.parse(jqXHR.responseText).error) || msg; } catch (e) {}
+                    $btn.text('Save');
+                    $status.text(msg).addClass('fd-status-err').removeClass('fd-status-ok');
+                })
+                .always(function () { $btn.prop('disabled', false); });
+            });
+        }
+
+        // ── File attachments ─────────────────────────────────────────────────
         function fetchAndRender() {
             $section.find('.flow-list').html('<div class="detail-loading"><span class="spinner"></span></div>');
             $.getJSON(ZOHO_CONTACT_ATTACHMENTS_URL + '?contact_id=' + encodeURIComponent(pmId))
@@ -1468,43 +1649,44 @@ $(function () {
             });
         }
 
-        fetchAndRender();
+        if (pmId) {
+            fetchAndRender();
 
-        $section.on('change', '.flow-file-input', function () {
-            uploadFiles(this.files);
-            this.value = '';
-        });
-
-        $section.find('.flow-dropzone')
-            .on('click', function (e) {
-                if ($(e.target).closest('label, input[type=file]').length) return;
-                $section.find('.flow-file-input').trigger('click');
-            })
-            .on('dragover dragenter', function (e) {
-                e.preventDefault();
-                $(this).addClass('flow-drop-active');
-            })
-            .on('dragleave drop', function (e) {
-                e.preventDefault();
-                $(this).removeClass('flow-drop-active');
-                if (e.type === 'drop') uploadFiles(e.originalEvent.dataTransfer.files);
+            $section.on('change', '.flow-file-input', function () {
+                uploadFiles(this.files);
+                this.value = '';
             });
 
+            $section.find('.flow-dropzone')
+                .on('click', function (e) {
+                    if ($(e.target).closest('label, input[type=file]').length) return;
+                    $section.find('.flow-file-input').trigger('click');
+                })
+                .on('dragover dragenter', function (e) {
+                    e.preventDefault();
+                    $(this).addClass('flow-drop-active');
+                })
+                .on('dragleave drop', function (e) {
+                    e.preventDefault();
+                    $(this).removeClass('flow-drop-active');
+                    if (e.type === 'drop') uploadFiles(e.originalEvent.dataTransfer.files);
+                });
 
-        $section.on('click', '.flow-del-btn', function () {
-            const docId = $(this).data('id');
-            if (!confirm('Delete this attachment?')) return;
-            $.ajax({
-                url: ZOHO_CONTACT_DELETE_URL, type: 'POST', contentType: 'application/json',
-                data: JSON.stringify({ contact_id: pmId, document_id: docId }),
-            })
-            .done(function () { fetchAndRender(); })
-            .fail(function (jqXHR) {
-                let msg = 'Failed to delete. Please try again.';
-                try { msg = (JSON.parse(jqXHR.responseText).error) || msg; } catch (e) {}
-                alert(msg);
+            $section.on('click', '.flow-del-btn', function () {
+                const docId = $(this).data('id');
+                if (!confirm('Delete this attachment?')) return;
+                $.ajax({
+                    url: ZOHO_CONTACT_DELETE_URL, type: 'POST', contentType: 'application/json',
+                    data: JSON.stringify({ contact_id: pmId, document_id: docId }),
+                })
+                .done(function () { fetchAndRender(); })
+                .fail(function (jqXHR) {
+                    let msg = 'Failed to delete. Please try again.';
+                    try { msg = (JSON.parse(jqXHR.responseText).error) || msg; } catch (e) {}
+                    alert(msg);
+                });
             });
-        });
+        }
     }
 
     function loadOvAttachments(itemId) {
@@ -1545,17 +1727,41 @@ $(function () {
      * Compute all report metrics from the employee's paid invoices array.
      * Each invoice: { invoice_id, invoice_number, date, customer_name, total }
      */
-    function buildReportData(invoices, msrMonthly) {
-        const currentYear = new Date().getFullYear();
+    function buildIncomeTblRows(rpt) {
+        let cumSum = 0;
+        return rpt.monthLabels.map(function (lbl, i) {
+            const inc = rpt.monthlyIncome[i];
+            cumSum += inc;
+            const incStr = inc    > 0 ? formatCurrency(inc)    : '—';
+            const cumStr = cumSum > 0 ? formatCurrency(cumSum) : '—';
+            return '<tr><td>' + lbl + '</td>'
+                + '<td class="amount-cell">' + escHtml(incStr) + '</td>'
+                + '<td class="amount-cell">' + escHtml(cumStr) + '</td></tr>';
+        }).join('');
+    }
 
-        // ── 1. Monthly income for current year ──────────────────────────────
+    function buildReportData(invoices, msrMonthly) {
+        const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const now = new Date();
+
+        // ── 1. Monthly income — last 12 rolling months (oldest → newest) ────
+        const buckets = [];
+        for (let i = 11; i >= 0; i--) {
+            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            buckets.push({ year: d.getFullYear(), month: d.getMonth() });
+        }
         const monthlyIncome = Array(12).fill(0);
-        invoices
-            .filter(inv => inv.date && new Date(inv.date).getFullYear() === currentYear)
-            .forEach(inv => {
-                const m = new Date(inv.date).getMonth();
-                monthlyIncome[m] += parseFloat(inv.total || 0);
+        invoices.forEach(function (inv) {
+            if (!inv.date) return;
+            const d = new Date(inv.date);
+            const idx = buckets.findIndex(function (b) {
+                return b.year === d.getFullYear() && b.month === d.getMonth();
             });
+            if (idx >= 0) monthlyIncome[idx] += parseFloat(inv.total || 0);
+        });
+        const monthLabels = buckets.map(function (b) {
+            return MONTH_ABBR[b.month] + (b.year !== now.getFullYear() ? ' \'' + String(b.year).slice(2) : '');
+        });
 
         // ── 2. Cumulative income (Jan → each month, current year) ────────────
         let running = 0;
@@ -1568,20 +1774,9 @@ $(function () {
         // ── 4. Balance per month = Yearly Support − cumulative income ────────
         const balance = cumulativeIncome.map(c => totalYearlySupport - c);
 
-        // ── 5. Pie chart — current year income vs MSR yearly target ──────────
-        const yearTotals = {};
-        invoices.forEach(inv => {
-            if (!inv.date) return;
-            const yr = new Date(inv.date).getFullYear();
-            yearTotals[yr] = (yearTotals[yr] || 0) + parseFloat(inv.total || 0);
-        });
-        const yrVals = Object.values(yearTotals);
-        const avgAnnualIncome = yrVals.length > 0
-            ? yrVals.reduce((s, v) => s + v, 0) / yrVals.length
-            : 0;
-
+        // ── 5. Pie chart — last 12 months income vs MSR yearly target ────────
         const percentFunded      = totalYearlySupport > 0
-            ? Math.min(100, (avgAnnualIncome / totalYearlySupport) * 100)
+            ? Math.min(100, (yearTotal / totalYearlySupport) * 100)
             : 0;
         const percentOutstanding = Math.max(0, 100 - percentFunded);
 
@@ -1589,13 +1784,13 @@ $(function () {
         const monthlyAvg     = monthsWithData > 0 ? yearTotal / monthsWithData : 0;
 
         return {
+            monthLabels,
             monthlyIncome,
             cumulativeIncome,
             balance,
             yearTotal,
             monthlyAvg,
             totalYearlySupport,
-            avgAnnualIncome,
             percentFunded,
             percentOutstanding,
         };
@@ -1606,14 +1801,11 @@ $(function () {
     // -------------------------------------------------------------------------
 
     function initReportCharts(rpt) {
-        const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun',
-                        'Jul','Aug','Sep','Oct','Nov','Dec'];
-
         const auCurrency = v => formatCurrency(v);
 
         const lineOpts = (datasets) => ({
             type: 'line',
-            data: { labels: MONTHS, datasets },
+            data: { labels: rpt.monthLabels, datasets },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
