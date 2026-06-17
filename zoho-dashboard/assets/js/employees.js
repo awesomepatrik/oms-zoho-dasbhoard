@@ -1394,12 +1394,10 @@ $(function () {
 
         if (!pmId && !flowCf) {
             $('#flow-tab-count').text('');
-            $pane.html('<p class="detail-empty-msg">No project manager is assigned to this employee.</p>');
-            return;
         }
 
-        // Build Flow Details table HTML
-        const flowDetailsHtml = flowCf ? (function () {
+        // Build Flow Details table HTML — always shown so rows/sections can be added
+        const flowDetailsHtml = (function () {
             const rows = parseFlowCsv(flowCsv);
             // Section header: col2 empty AND col1 is a plain name (letters/spaces/& only)
             const namePattern = /^[A-Za-z\s&']+$/;
@@ -1434,7 +1432,7 @@ $(function () {
                 </div>
                 <div class="fd-save-status"></div>
             </div>`;
-        })() : '';
+        })();
 
         const fileUploadHtml = pmId ? `
             <div class="flow-uploader-panel">
@@ -1467,7 +1465,7 @@ $(function () {
         const $section = $pane.find('.flow-section');
 
         // ── Flow Details event handlers ──────────────────────────────────────
-        if (flowCf) {
+        {
             const newGrip    = '<td class="fd-drag-col"><span class="fd-drag-handle" title="Drag to reorder"><svg width="8" height="14" viewBox="0 0 8 14" fill="currentColor"><circle cx="2" cy="2" r="1.4"/><circle cx="6" cy="2" r="1.4"/><circle cx="2" cy="7" r="1.4"/><circle cx="6" cy="7" r="1.4"/><circle cx="2" cy="12" r="1.4"/><circle cx="6" cy="12" r="1.4"/></svg></span></td>';
             const newActions = '<td class="fd-row-actions"><button class="fd-del-row-btn" title="Delete">&times;</button></td>';
 
@@ -1534,6 +1532,12 @@ $(function () {
             $section.on('click', '.fd-save', function () {
                 const $btn = $(this).prop('disabled', true).text('Saving…');
                 const $status = $section.find('.fd-save-status');
+                if (!flowFldId) {
+                    $btn.prop('disabled', false).text('Save');
+                    $status.text('Flow Details custom field not found on this item in Zoho Books.')
+                           .addClass('fd-status-err').removeClass('fd-status-ok');
+                    return;
+                }
                 const rows = [];
                 $section.find('.fd-table tbody tr').each(function () {
                     if ($(this).hasClass('fd-spacer-row')) { rows.push(['', '']); return; }
