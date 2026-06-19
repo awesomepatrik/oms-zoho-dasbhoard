@@ -19,7 +19,7 @@ if (!empty($_GET['error'])) {
         . "<title>Authorisation Error</title></head><body>"
         . "<h1>Authorisation Error</h1>"
         . "<p>Zoho returned an error: <strong>{$error}</strong></p>"
-        . "<p><a href='/oms-zoho-dashboard/zoho-dashboard/auth/connect.php'>Try again</a></p>"
+        . "<p><a href='/oms-zoho-dashboard/auth/connect.php'>Try again</a></p>"
         . "</body></html>";
     exit;
 }
@@ -31,7 +31,7 @@ if (empty($_GET['code'])) {
         . "<title>Missing Code</title></head><body>"
         . "<h1>Missing Authorisation Code</h1>"
         . "<p>No code was returned by Zoho. "
-        . "<a href='/oms-zoho-dashboard/zoho-dashboard/auth/connect.php'>Restart authorisation</a>.</p>"
+        . "<a href='/oms-zoho-dashboard/auth/connect.php'>Restart authorisation</a>.</p>"
         . "</body></html>";
     exit;
 }
@@ -48,11 +48,11 @@ try {
         . "<title>Token Exchange Failed</title></head><body>"
         . "<h1>Token Exchange Failed</h1>"
         . "<p>Could not obtain tokens from Zoho. Check the server error log.</p>"
-        . "<p><a href='/oms-zoho-dashboard/zoho-dashboard/auth/connect.php'>Try again</a></p>"
+        . "<p><a href='/oms-zoho-dashboard/auth/connect.php'>Try again</a></p>"
         . "</body></html>";
     exit;
 }
 
 // Success — tokens stored. Redirect to the dashboard.
-header('Location: /oms-zoho-dashboard/zoho-dashboard/');
+header('Location: /oms-zoho-dashboard/');
 exit;

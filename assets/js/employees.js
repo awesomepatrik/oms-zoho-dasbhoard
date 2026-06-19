@@ -14,7 +14,7 @@
 
 $(function () {
 
-    const PROXY = '/oms-zoho-dashboard/zoho-dashboard/api/proxy.php';
+    const PROXY = '/oms-zoho-dashboard/api/proxy.php';
 
     let allEmployees      = [];
     let pmMap             = {};   // item_id => { pm_id, pm_name }
@@ -91,7 +91,7 @@ $(function () {
 
             }).fail(function (jqXHR) {
                 if (jqXHR.status === 401) {
-                    window.location.href = '/oms-zoho-dashboard/zoho-dashboard/auth/connect.php';
+                    window.location.href = '/oms-zoho-dashboard/auth/connect.php';
                     return;
                 }
                 $('#emp-list').html('<p class="sidebar-status error-msg">Failed to load. Try refreshing.</p>');
@@ -225,7 +225,7 @@ $(function () {
 
         }).fail(function (jqXHR) {
             if (jqXHR.status === 401) {
-                window.location.href = '/oms-zoho-dashboard/zoho-dashboard/auth/connect.php';
+                window.location.href = '/oms-zoho-dashboard/auth/connect.php';
                 return;
             }
             $detail.html('<div class="detail-empty"><p class="error-msg">Failed to load. Try refreshing.</p></div>');
@@ -759,7 +759,7 @@ $(function () {
             $status.text('').removeClass('msr-status-ok msr-status-err');
 
             $.ajax({
-                url:         '/oms-zoho-dashboard/zoho-dashboard/api/update_msr.php',
+                url:         '/oms-zoho-dashboard/api/update_msr.php',
                 type:        'POST',
                 contentType: 'application/json',
                 data:        JSON.stringify({ item_id: itemId, field_id: fieldId, value }),
@@ -1316,12 +1316,12 @@ $(function () {
     // Flow tab — file uploads and attachment display
     // -------------------------------------------------------------------------
 
-    const ATTACHMENTS_URL              = '/oms-zoho-dashboard/zoho-dashboard/api/attachments.php';
-    const UPLOADS_BASE                 = '/oms-zoho-dashboard/zoho-dashboard/uploads/';
-    const ZOHO_CONTACT_ATTACHMENTS_URL = '/oms-zoho-dashboard/zoho-dashboard/api/zoho_contact_attachments.php';
-    const ZOHO_CONTACT_UPLOAD_URL      = '/oms-zoho-dashboard/zoho-dashboard/api/zoho_contact_upload.php';
-    const ZOHO_CONTACT_DELETE_URL      = '/oms-zoho-dashboard/zoho-dashboard/api/zoho_contact_delete_attachment.php';
-    const ZOHO_ATTACHMENT_FILE_URL     = '/oms-zoho-dashboard/zoho-dashboard/api/zoho_attachment_file.php';
+    const ATTACHMENTS_URL              = '/oms-zoho-dashboard/api/attachments.php';
+    const UPLOADS_BASE                 = '/oms-zoho-dashboard/uploads/';
+    const ZOHO_CONTACT_ATTACHMENTS_URL = '/oms-zoho-dashboard/api/zoho_contact_attachments.php';
+    const ZOHO_CONTACT_UPLOAD_URL      = '/oms-zoho-dashboard/api/zoho_contact_upload.php';
+    const ZOHO_CONTACT_DELETE_URL      = '/oms-zoho-dashboard/api/zoho_contact_delete_attachment.php';
+    const ZOHO_ATTACHMENT_FILE_URL     = '/oms-zoho-dashboard/api/zoho_attachment_file.php';
 
     function zohoFileTypeMime(fileType) {
         const t = (fileType || '').toLowerCase();
@@ -1546,7 +1546,7 @@ $(function () {
                     });
                     const csvValue = serializeFlowCsv(rows);
                     $.ajax({
-                        url: '/oms-zoho-dashboard/zoho-dashboard/api/update_msr.php',
+                        url: '/oms-zoho-dashboard/api/update_msr.php',
                         type: 'POST', contentType: 'application/json',
                         data: JSON.stringify({ item_id: item.item_id, field_id: fieldId, value: csvValue }),
                     })
@@ -1573,7 +1573,7 @@ $(function () {
                     doSave(flowFldId);
                 } else {
                     // Field ID unknown — look it up from the org-level custom field definitions
-                    $.getJSON('/oms-zoho-dashboard/zoho-dashboard/api/proxy.php?endpoint=books_all_item_customfields')
+                    $.getJSON('/oms-zoho-dashboard/api/proxy.php?endpoint=books_all_item_customfields')
                         .done(function (res) {
                             const found = (res.data || []).find(function (f) {
                                 const lbl = (f.label || '').toLowerCase();

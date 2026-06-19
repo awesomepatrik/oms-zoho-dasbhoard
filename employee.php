@@ -12,7 +12,7 @@ require_auth();
 // Sanitise the item ID — Zoho item IDs are numeric strings.
 $itemId = preg_replace('/[^a-zA-Z0-9_\-]/', '', $_GET['id'] ?? '');
 if ($itemId === '') {
-    header('Location: /oms-zoho-dashboard/zoho-dashboard/index.php');
+    header('Location: /oms-zoho-dashboard/index.php');
     exit;
 }
 ?>
@@ -25,15 +25,15 @@ if ($itemId === '') {
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"
             integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo="
             crossorigin="anonymous"></script>
-    <link rel="stylesheet" href="/oms-zoho-dashboard/zoho-dashboard/assets/css/dashboard.css">
+    <link rel="stylesheet" href="/oms-zoho-dashboard/assets/css/dashboard.css">
 </head>
 <body>
 
     <header class="site-header">
-        <a href="/oms-zoho-dashboard/zoho-dashboard/index.php" class="btn-back">← Employees</a>
+        <a href="/oms-zoho-dashboard/index.php" class="btn-back">← Employees</a>
         <h1 id="page-title">Employee Dashboard</h1>
         <nav>
-            <a href="/oms-zoho-dashboard/zoho-dashboard/auth/connect.php" class="btn-reauth">Re-authorise</a>
+            <a href="/oms-zoho-dashboard/auth/connect.php" class="btn-reauth">Re-authorise</a>
         </nav>
     </header>
 
@@ -60,8 +60,8 @@ if ($itemId === '') {
 
     <!-- Pass the sanitised item ID to JS -->
     <script>var ITEM_ID = <?= json_encode($itemId) ?>;</script>
-    <script src="/oms-zoho-dashboard/zoho-dashboard/assets/js/tables.js"></script>
-    <script src="/oms-zoho-dashboard/zoho-dashboard/assets/js/employee.js"></script>
+    <script src="/oms-zoho-dashboard/assets/js/tables.js"></script>
+    <script src="/oms-zoho-dashboard/assets/js/employee.js"></script>
 
 </body>
 </html>

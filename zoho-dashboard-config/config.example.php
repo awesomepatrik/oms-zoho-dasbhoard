@@ -14,7 +14,7 @@ return [
     // -------------------------------------------------------------------------
     'client_id'     => 'YOUR_CLIENT_ID',
     'client_secret' => 'YOUR_CLIENT_SECRET',
-    'redirect_uri'  => 'http://localhost:8080/oms-zoho-dashboard/zoho-dashboard/auth/callback.php',
+    'redirect_uri'  => 'http://localhost:8080/oms-zoho-dashboard/auth/callback.php',
 
     // Scopes required by this dashboard
     'scope' => 'ZohoBooks.fullaccess.all,ZohoCRM.modules.ALL,ZohoCRM.users.READ',

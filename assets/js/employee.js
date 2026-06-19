@@ -14,11 +14,11 @@
 
 $(function () {
 
-    const PROXY   = '/oms-zoho-dashboard/zoho-dashboard/api/proxy.php';
+    const PROXY   = '/oms-zoho-dashboard/api/proxy.php';
     const ITEM_ID = String(window.ITEM_ID || '');
 
     if (!ITEM_ID) {
-        window.location.href = '/oms-zoho-dashboard/zoho-dashboard/index.php';
+        window.location.href = '/oms-zoho-dashboard/index.php';
         return;
     }
 
@@ -65,7 +65,7 @@ $(function () {
 
         }).fail(function (jqXHR) {
             if (jqXHR.status === 401) {
-                window.location.href = '/oms-zoho-dashboard/zoho-dashboard/auth/connect.php';
+                window.location.href = '/oms-zoho-dashboard/auth/connect.php';
                 return;
             }
             showError('Failed to load employee data. Please try refreshing.');

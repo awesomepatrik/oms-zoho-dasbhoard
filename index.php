@@ -15,14 +15,14 @@ require_auth();
             integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo="
             crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-    <link rel="stylesheet" href="/oms-zoho-dashboard/zoho-dashboard/assets/css/dashboard.css">
+    <link rel="stylesheet" href="/oms-zoho-dashboard/assets/css/dashboard.css">
 </head>
 <body class="app-body">
 
     <header class="site-header">
         <h1>One Mission Society</h1>
         <nav>
-            <a href="/oms-zoho-dashboard/zoho-dashboard/auth/connect.php" class="btn-reauth">Re-authorise</a>
+            <a href="/oms-zoho-dashboard/auth/connect.php" class="btn-reauth">Re-authorise</a>
         </nav>
     </header>
 
@@ -61,7 +61,7 @@ require_auth();
 
     </div>
 
-    <script src="/oms-zoho-dashboard/zoho-dashboard/assets/js/employees.js?v=<?= filemtime(__DIR__ . '/assets/js/employees.js') ?>"></script>
+    <script src="/oms-zoho-dashboard/assets/js/employees.js?v=<?= filemtime(__DIR__ . '/assets/js/employees.js') ?>"></script>
 
 </body>
 </html>

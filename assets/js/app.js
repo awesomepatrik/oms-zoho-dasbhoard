@@ -17,7 +17,7 @@
 
 $(function () {
 
-    const PROXY = '/oms-zoho-dashboard/zoho-dashboard/api/proxy.php';
+    const PROXY = '/oms-zoho-dashboard/api/proxy.php';
 
     // -------------------------------------------------------------------------
     // Boot
@@ -52,7 +52,7 @@ $(function () {
             renderEmployees(items, invoices);
         }).fail(function (jqXHR) {
             if (jqXHR.status === 401) {
-                window.location.href = '/zoho-dashboard/auth/connect.php';
+                window.location.href = '/oms-zoho-dashboard/auth/connect.php';
             }
         });
     }
@@ -65,7 +65,7 @@ $(function () {
         return $.getJSON(PROXY + '?endpoint=' + endpointWithParams)
             .fail(function (jqXHR) {
                 if (jqXHR.status === 401) {
-                    window.location.href = '/zoho-dashboard/auth/connect.php';
+                    window.location.href = '/oms-zoho-dashboard/auth/connect.php';
                 }
             });
     }

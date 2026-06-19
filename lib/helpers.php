@@ -50,7 +50,7 @@ function require_auth(): void
     require_once __DIR__ . '/ZohoOAuth.php';
     $oauth = new ZohoOAuth();
     if (!$oauth->hasValidTokens()) {
-        header('Location: /oms-zoho-dashboard/zoho-dashboard/auth/connect.php');
+        header('Location: /oms-zoho-dashboard/auth/connect.php');
         exit;
     }
 }
