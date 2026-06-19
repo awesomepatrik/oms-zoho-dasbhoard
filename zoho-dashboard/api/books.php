@@ -255,8 +255,9 @@ function books_getItemCustomFields(string $token): array
     try {
         $url    = "{$baseUrl}/settings/customfields?{$orgQs}";
         $d      = books_get($token, $url);
-        // Fields for items live under the 'item' key in the response.
-        $fields = $d['item'] ?? $d['customfields'] ?? $d['custom_fields'] ?? [];
+        // Zoho returns {"customfields": {"item": [...], "invoice": [...], ...}}
+        $fields = $d['customfields']['item'] ?? $d['item'] ?? [];
+        if (!is_array($fields)) $fields = [];
         foreach ($fields as $cf) {
             $lbl = strtolower($cf['label'] ?? '');
             foreach ($msrKeywords as $kw) {
@@ -269,6 +270,31 @@ function books_getItemCustomFields(string $token): array
         error_log('books_getItemCustomFields settings error: ' . $e->getMessage());
     }
 
+    return [];
+}
+
+/**
+ * Return ALL item custom field definitions (label + customfield_id) from Zoho Books settings.
+ * Used to look up field IDs for fields that have no value on a specific item.
+ */
+function books_getAllItemCustomFields(string $token): array
+{
+    $cfg     = get_config();
+    $baseUrl = rtrim($cfg['books_api_base'], '/');
+    $orgQs   = http_build_query(['organization_id' => $cfg['books_org_id']]);
+    try {
+        $url    = "{$baseUrl}/settings/customfields?{$orgQs}";
+        $d      = books_get($token, $url);
+        // Zoho returns {"customfields": {"item": [...], "invoice": [...], ...}}
+        $fields = $d['customfields']['item'] ?? $d['item'] ?? [];
+        if (!is_array($fields)) $fields = [];
+        return array_values(array_map(function (array $cf): array {
+            $id = $cf['customfield_id'] ?? $cf['field_id'] ?? '';
+            return ['customfield_id' => $id, 'label' => $cf['label'] ?? ''];
+        }, $fields));
+    } catch (RuntimeException $e) {
+        error_log('books_getAllItemCustomFields error: ' . $e->getMessage());
+    }
     return [];
 }
 

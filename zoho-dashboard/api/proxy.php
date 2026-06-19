@@ -35,6 +35,7 @@ const ENDPOINTS = [
     'books_items'                => ['fn' => 'books_getItems'],
     'books_item_detail'          => ['fn' => 'books_getItemDetail',          'param' => 'item_id'],
     'books_item_customfields'    => ['fn' => 'books_getItemCustomFields'],
+    'books_all_item_customfields'=> ['fn' => 'books_getAllItemCustomFields'],
     'books_contact_detail'       => ['fn' => 'books_getContactDetail',       'param' => 'contact_id'],
     'books_employee_contact'     => ['fn' => 'books_getEmployeeContact',     'param' => 'item_id'],
     'books_items_pm_map'         => ['fn' => 'books_getItemsPmMap'],

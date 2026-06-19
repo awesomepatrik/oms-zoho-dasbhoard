@@ -1389,7 +1389,7 @@ $(function () {
             const lbl = (f.label || '').toLowerCase();
             return lbl.includes('flow') && lbl.includes('detail');
         });
-        const flowFldId = flowCf ? String(flowCf.customfield_id || flowCf.field_id || '').trim() : '';
+        let flowFldId = flowCf ? String(flowCf.customfield_id || flowCf.field_id || '').trim() : '';
         const flowCsv   = flowCf ? String(flowCf.value || '').trim() : '';
 
         if (!pmId && !flowCf) {
@@ -1530,47 +1530,70 @@ $(function () {
             });
 
             $section.on('click', '.fd-save', function () {
-                const $btn = $(this).prop('disabled', true).text('Saving…');
+                const $btn    = $(this).prop('disabled', true).text('Saving…');
                 const $status = $section.find('.fd-save-status');
-                if (!flowFldId) {
-                    $btn.prop('disabled', false).text('Save');
-                    $status.text('Flow Details custom field not found on this item in Zoho Books.')
-                           .addClass('fd-status-err').removeClass('fd-status-ok');
-                    return;
+
+                function doSave(fieldId) {
+                    const rows = [];
+                    $section.find('.fd-table tbody tr').each(function () {
+                        if ($(this).hasClass('fd-spacer-row')) { rows.push(['', '']); return; }
+                        const $tds = $(this).find('td[contenteditable]');
+                        if ($(this).hasClass('fd-header-row')) {
+                            rows.push([$tds.first().text(), '']);
+                        } else {
+                            rows.push([$tds.eq(0).text(), $tds.eq(1).text()]);
+                        }
+                    });
+                    const csvValue = serializeFlowCsv(rows);
+                    $.ajax({
+                        url: '/oms-zoho-dashboard/zoho-dashboard/api/update_msr.php',
+                        type: 'POST', contentType: 'application/json',
+                        data: JSON.stringify({ item_id: item.item_id, field_id: fieldId, value: csvValue }),
+                    })
+                    .done(function (res) {
+                        if (res.success) {
+                            $btn.text('Save');
+                            $status.text('Saved').addClass('fd-status-ok').removeClass('fd-status-err');
+                            setTimeout(function () { $status.text('').removeClass('fd-status-ok'); }, 2000);
+                        } else {
+                            $btn.text('Save');
+                            $status.text(res.error || 'Save failed').addClass('fd-status-err').removeClass('fd-status-ok');
+                        }
+                    })
+                    .fail(function (jqXHR) {
+                        let msg = 'Save failed';
+                        try { msg = (JSON.parse(jqXHR.responseText).error) || msg; } catch (e) {}
+                        $btn.text('Save');
+                        $status.text(msg).addClass('fd-status-err').removeClass('fd-status-ok');
+                    })
+                    .always(function () { $btn.prop('disabled', false); });
                 }
-                const rows = [];
-                $section.find('.fd-table tbody tr').each(function () {
-                    if ($(this).hasClass('fd-spacer-row')) { rows.push(['', '']); return; }
-                    const $tds = $(this).find('td[contenteditable]');
-                    if ($(this).hasClass('fd-header-row')) {
-                        rows.push([$tds.first().text(), '']);
-                    } else {
-                        rows.push([$tds.eq(0).text(), $tds.eq(1).text()]);
-                    }
-                });
-                const csvValue = serializeFlowCsv(rows);
-                $.ajax({
-                    url: '/oms-zoho-dashboard/zoho-dashboard/api/update_msr.php',
-                    type: 'POST', contentType: 'application/json',
-                    data: JSON.stringify({ item_id: item.item_id, field_id: flowFldId, value: csvValue }),
-                })
-                .done(function (res) {
-                    if (res.success) {
-                        $btn.text('Save');
-                        $status.text('Saved').addClass('fd-status-ok').removeClass('fd-status-err');
-                        setTimeout(function () { $status.text('').removeClass('fd-status-ok'); }, 2000);
-                    } else {
-                        $btn.text('Save');
-                        $status.text(res.error || 'Save failed').addClass('fd-status-err').removeClass('fd-status-ok');
-                    }
-                })
-                .fail(function (jqXHR) {
-                    let msg = 'Save failed';
-                    try { msg = (JSON.parse(jqXHR.responseText).error) || msg; } catch (e) {}
-                    $btn.text('Save');
-                    $status.text(msg).addClass('fd-status-err').removeClass('fd-status-ok');
-                })
-                .always(function () { $btn.prop('disabled', false); });
+
+                if (flowFldId) {
+                    doSave(flowFldId);
+                } else {
+                    // Field ID unknown — look it up from the org-level custom field definitions
+                    $.getJSON('/oms-zoho-dashboard/zoho-dashboard/api/proxy.php?endpoint=books_all_item_customfields')
+                        .done(function (res) {
+                            const found = (res.data || []).find(function (f) {
+                                const lbl = (f.label || '').toLowerCase();
+                                return lbl.includes('flow') && lbl.includes('detail');
+                            });
+                            if (found && found.customfield_id) {
+                                flowFldId = String(found.customfield_id).trim();
+                                doSave(flowFldId);
+                            } else {
+                                $btn.prop('disabled', false).text('Save');
+                                $status.text('Flow Details custom field not found in Zoho Books settings.')
+                                       .addClass('fd-status-err').removeClass('fd-status-ok');
+                            }
+                        })
+                        .fail(function () {
+                            $btn.prop('disabled', false).text('Save');
+                            $status.text('Could not look up custom field. Please try again.')
+                                   .addClass('fd-status-err').removeClass('fd-status-ok');
+                        });
+                }
             });
         }
 
