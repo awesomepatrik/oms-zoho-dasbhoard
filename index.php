@@ -3,7 +3,11 @@
  * Employees list page — two-panel master/detail layout.
  */
 require_once __DIR__ . '/lib/helpers.php';
+require_once __DIR__ . '/lib/Auth.php';
+Auth::requireLogin();
 require_auth();
+
+$me = Auth::user();
 ?>
 <!DOCTYPE html>
 <html lang="en-AU">
@@ -22,7 +26,12 @@ require_auth();
     <header class="site-header">
         <h1>One Mission Society</h1>
         <nav>
-            <a href="/oms-zoho-dashboard/auth/connect.php" class="btn-reauth">Re-authorise</a>
+            <span class="site-header-user"><?= esc($me['name'] ?? '') ?></span>
+            <?php if (($me['role'] ?? '') === 'admin'): ?>
+                <a href="/oms-zoho-dashboard/user-management.php" class="btn-reauth">Users</a>
+                <a href="/oms-zoho-dashboard/auth/connect.php" class="btn-reauth">Re-authorise</a>
+            <?php endif; ?>
+            <a href="/oms-zoho-dashboard/account/logout.php" class="btn-reauth">Log out</a>
         </nav>
     </header>
 

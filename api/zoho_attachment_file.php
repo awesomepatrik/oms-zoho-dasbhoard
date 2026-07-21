@@ -8,7 +8,10 @@
  */
 
 require_once __DIR__ . '/../lib/helpers.php';
+require_once __DIR__ . '/../lib/Auth.php';
 require_once __DIR__ . '/../lib/ZohoOAuth.php';
+
+Auth::requireLoginApi();
 
 $contactId  = preg_replace('/[^a-zA-Z0-9_\-]/', '', $_GET['contact_id']  ?? '');
 $documentId = preg_replace('/[^a-zA-Z0-9_\-]/', '', $_GET['document_id'] ?? '');

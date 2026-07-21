@@ -7,7 +7,11 @@
  * Query param: ?id=<item_id>
  */
 require_once __DIR__ . '/lib/helpers.php';
+require_once __DIR__ . '/lib/Auth.php';
+Auth::requireLogin();
 require_auth();
+
+$me = Auth::user();
 
 // Sanitise the item ID — Zoho item IDs are numeric strings.
 $itemId = preg_replace('/[^a-zA-Z0-9_\-]/', '', $_GET['id'] ?? '');
@@ -33,7 +37,12 @@ if ($itemId === '') {
         <a href="/oms-zoho-dashboard/index.php" class="btn-back">← Employees</a>
         <h1 id="page-title">Employee Dashboard</h1>
         <nav>
-            <a href="/oms-zoho-dashboard/auth/connect.php" class="btn-reauth">Re-authorise</a>
+            <span class="site-header-user"><?= esc($me['name'] ?? '') ?></span>
+            <?php if (($me['role'] ?? '') === 'admin'): ?>
+                <a href="/oms-zoho-dashboard/user-management.php" class="btn-reauth">Users</a>
+                <a href="/oms-zoho-dashboard/auth/connect.php" class="btn-reauth">Re-authorise</a>
+            <?php endif; ?>
+            <a href="/oms-zoho-dashboard/account/logout.php" class="btn-reauth">Log out</a>
         </nav>
     </header>
 

@@ -9,6 +9,7 @@ Pulls data from Zoho Books API (recurring invoices / donor pledges)
 - Vanilla JS + jQuery for frontend
 - Chart.js (CDN) for charts
 - Flat JSON file cache to reduce API calls
+- MySQL (via PDO) for user accounts/roles/password resets -- separate from the Zoho data path, see `zoho-dashboard-config/schema.sql`
 
 ## Key reports needed
 - Total pledged support per employee vs target
@@ -30,3 +31,14 @@ Pulls data from Zoho Books API (recurring invoices / donor pledges)
 - API calls proxied through PHP -- no Zoho credentials exposed to browser
 - Cache responses for 1 hour minimum
 - Australian English in all UI text
+
+## Login & user management
+The whole app requires sign-in (`lib/Auth.php`, gated via `Auth::requireLogin()`
+at the top of every page and `Auth::requireLoginApi()` in every `api/*.php`
+endpoint). Two roles: `admin` and `staff`. `user-management.php` (admin only)
+creates/edits accounts -- there is no public signup; a new account gets an
+emailed "set your password" link instead of an admin-chosen password.
+
+- First admin: `php bin/create_admin.php "Full Name" email@example.org "password"` (CLI only, run once)
+- DB schema: `zoho-dashboard-config/schema.sql`
+- Full spec/decisions record: [docs/features/login-user-management.md](docs/features/login-user-management.md)

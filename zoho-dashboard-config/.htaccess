@@ -1,0 +1,3 @@
+# Deny all direct web access to this directory — config, tokens, and cache
+# must only ever be read via PHP's filesystem functions, never over HTTP.
+Require all denied

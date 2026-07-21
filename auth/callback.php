@@ -9,7 +9,11 @@
  *   ?error=access_denied
  */
 
+require_once __DIR__ . '/../lib/Auth.php';
 require_once __DIR__ . '/../lib/ZohoOAuth.php';
+
+Auth::requireLogin();
+Auth::requireRole('admin'); // (re)connecting Zoho affects the whole app's shared connection
 
 // Handle Zoho error responses.
 if (!empty($_GET['error'])) {

@@ -42,6 +42,14 @@ function error_out(string $message, int $status = 400): void
 }
 
 /**
+ * HTML-escape a string for safe output in page markup/attributes.
+ */
+function esc(string $s): string
+{
+    return htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
+}
+
+/**
  * Check that valid OAuth tokens exist; redirect to auth flow if not.
  * Call this at the top of pages that require authentication.
  */

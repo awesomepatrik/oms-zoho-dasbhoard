@@ -122,6 +122,27 @@ function books_getItemDetail(string $token, string $itemId): array
 }
 
 /**
+ * Filter a list of items (as returned by books_getItems) down to those whose
+ * "Recipient Group Email" custom field matches the given email
+ * (case-insensitive). Used to scope the item list to a single staff user.
+ *
+ * The list endpoint flattens custom fields onto each item as cf_<key>
+ * properties (Zoho derives <key> from the field's internal name, which is
+ * why both the correct and misspelled variants are checked, matching the
+ * "Recipient/Receipient Group Name" handling elsewhere in this file).
+ */
+function books_filterItemsByRecipientEmail(array $items, string $email): array
+{
+    $needle = strtolower(trim($email));
+    if ($needle === '') return [];
+
+    return array_values(array_filter($items, function (array $item) use ($needle): bool {
+        $value = $item['cf_recipient_group_email'] ?? $item['cf_receipient_group_email'] ?? '';
+        return strtolower(trim((string)$value)) === $needle;
+    }));
+}
+
+/**
  * Fetch a single contact by ID — includes contact_persons and custom_fields.
  */
 function books_getContactDetail(string $token, string $contactId): array
@@ -391,6 +412,66 @@ function books_getRecurringByItem(string $token, string $itemId): array
     }
 
     return $result;
+}
+
+/**
+ * Fetch the Support Account (Reserve) balance for an item.
+ *
+ * 1. Resolve the item's name, then look up the Chart of Accounts entry named
+ *    "{item name} - Reserve" via GET /chartofaccounts?account_name=...
+ * 2. Fetch that account's detail via GET /chartofaccounts/{account_id} and
+ *    read its balance.
+ */
+function books_getSupportAccountBalance(string $token, string $itemId): array
+{
+    $cfg     = get_config();
+    $baseUrl = rtrim($cfg['books_api_base'], '/');
+    $orgQs   = http_build_query(['organization_id' => $cfg['books_org_id']]);
+
+    $item     = books_getItemDetail($token, $itemId);
+    $itemName = trim($item['name'] ?? '');
+    if ($itemName === '') {
+        return ['account_name' => null, 'balance' => null, 'found' => false];
+    }
+    $targetName = $itemName . ' - Reserve';
+
+    // 1. List Chart of Accounts filtered by account_name.
+    $listUrl = "{$baseUrl}/chartofaccounts?{$orgQs}&" . http_build_query([
+        'account_name' => $targetName,
+        'showbalance'  => 'true',
+    ]);
+    $listResp = books_get($token, $listUrl);
+    $accounts = $listResp['chartofaccounts'] ?? [];
+
+    $match = null;
+    foreach ($accounts as $acc) {
+        if (strcasecmp(trim($acc['account_name'] ?? ''), $targetName) === 0) {
+            $match = $acc;
+            break;
+        }
+    }
+    $accountId = $match['account_id'] ?? '';
+    if ($accountId === '') {
+        return ['account_name' => $targetName, 'balance' => null, 'found' => false];
+    }
+
+    // 2. Get the account detail for its closing balance.
+    $detailUrl = "{$baseUrl}/chartofaccounts/" . rawurlencode($accountId)
+               . "?{$orgQs}&" . http_build_query(['showbalance' => 'true']);
+    $detailResp = books_get($token, $detailUrl);
+    $account    = $detailResp['chart_of_account'] ?? [];
+
+    $balance = $account['closing_balance']
+        ?? $account['current_balance']
+        ?? $match['current_balance']
+        ?? null;
+
+    return [
+        'account_id'   => $accountId,
+        'account_name' => $account['account_name'] ?? $targetName,
+        'balance'      => $balance !== null ? (float)$balance : null,
+        'found'        => true,
+    ];
 }
 
 // -----------------------------------------------------------------------------

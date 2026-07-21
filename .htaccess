@@ -2,13 +2,14 @@
 
 Options -Indexes
 
-# Block direct browser access to the lib/ directory.
+# Block direct browser access to the lib/ and bin/ directories.
 RewriteEngine On
 RewriteRule ^lib/ - [F,L]
+RewriteRule ^bin/ - [F,L]
 
-# Ensure PHP files in lib/ cannot be executed via HTTP.
+# Ensure PHP files in lib/ or bin/ cannot be executed via HTTP.
 <FilesMatch "^.*$">
-    <If "%{REQUEST_URI} =~ m|/lib/|">
+    <If "%{REQUEST_URI} =~ m#/(lib|bin)/#">
         Require all denied
     </If>
 </FilesMatch>

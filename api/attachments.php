@@ -4,8 +4,11 @@
  */
 
 require_once __DIR__ . '/../lib/helpers.php';
+require_once __DIR__ . '/../lib/Auth.php';
 
 header('Content-Type: application/json; charset=utf-8');
+
+Auth::requireLoginApi();
 
 $itemId = preg_replace('/[^a-zA-Z0-9_\-]/', '', $_GET['item_id'] ?? '');
 if ($itemId === '') {

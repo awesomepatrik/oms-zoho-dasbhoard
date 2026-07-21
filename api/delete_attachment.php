@@ -5,8 +5,11 @@
  */
 
 require_once __DIR__ . '/../lib/helpers.php';
+require_once __DIR__ . '/../lib/Auth.php';
 
 header('Content-Type: application/json; charset=utf-8');
+
+Auth::requireLoginApi();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);

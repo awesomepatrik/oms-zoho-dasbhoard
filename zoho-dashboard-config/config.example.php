@@ -42,4 +42,19 @@ return [
     // -------------------------------------------------------------------------
     'cache_ttl' => 3600,
 
+    // -------------------------------------------------------------------------
+    // User login database (email/password auth, roles, password resets)
+    // -------------------------------------------------------------------------
+    'db_host'    => 'localhost',
+    'db_name'    => 'oms_zoho_dashboard',
+    'db_user'    => 'root',
+    'db_pass'    => '',
+    'db_charset' => 'utf8mb4',
+
+    // -------------------------------------------------------------------------
+    // Outbound mail (password reset emails) — sent via PHP's mail()
+    // -------------------------------------------------------------------------
+    'mail_from'      => 'no-reply@example.org',
+    'mail_from_name' => 'Mission Agency Dashboard',
+
 ];

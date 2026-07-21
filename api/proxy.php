@@ -17,9 +17,27 @@
  */
 
 require_once __DIR__ . '/../lib/helpers.php';
+require_once __DIR__ . '/../lib/Auth.php';
 require_once __DIR__ . '/../lib/ZohoOAuth.php';
 require_once __DIR__ . '/books.php';
 require_once __DIR__ . '/crm.php';
+
+Auth::requireLoginApi();
+
+/**
+ * Item list scoped to the current user: staff only see items whose
+ * "Recipient Group Email" custom field matches their own login email;
+ * admins see everything.
+ */
+function books_getItemsForCurrentUser(string $token): array
+{
+    $items = books_getItems($token);
+    $me    = Auth::user();
+    if (!$me || $me['role'] !== 'staff') {
+        return $items;
+    }
+    return books_filterItemsByRecipientEmail($items, $me['email']);
+}
 
 // ---------------------------------------------------------------------------
 // Endpoint whitelist
@@ -32,7 +50,7 @@ const ENDPOINTS = [
     'books_recurring'            => ['fn' => 'books_getRecurringInvoices'],
     'books_recurring_all'        => ['fn' => 'books_getAllRecurringInvoices'],
     'books_accounts'             => ['fn' => 'books_getAccounts'],
-    'books_items'                => ['fn' => 'books_getItems'],
+    'books_items'                => ['fn' => 'books_getItemsForCurrentUser'],
     'books_item_detail'          => ['fn' => 'books_getItemDetail',          'param' => 'item_id'],
     'books_item_customfields'    => ['fn' => 'books_getItemCustomFields'],
     'books_all_item_customfields'=> ['fn' => 'books_getAllItemCustomFields'],
@@ -45,6 +63,7 @@ const ENDPOINTS = [
     'books_invoice_transactions' => ['fn' => 'books_getInvoiceTransactions', 'param' => 'item_id'],
     'books_recurring_by_item'    => ['fn' => 'books_getRecurringByItem',     'param' => 'item_id'],
     'books_recurring_detail'     => ['fn' => 'books_getRecurringDetail',     'param' => 'recurring_invoice_id'],
+    'books_support_balance'      => ['fn' => 'books_getSupportAccountBalance','param' => 'item_id'],
     'crm_contacts'               => ['fn' => 'crm_getContacts'],
     'crm_employees'              => ['fn' => 'crm_getEmployees'],
     'crm_accounts'               => ['fn' => 'crm_getAccounts'],

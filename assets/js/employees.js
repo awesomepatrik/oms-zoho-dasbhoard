@@ -4,7 +4,7 @@
  * Left sidebar : scrollable employee list (only those with paid invoices).
  * Right panel  : Overview tab (item fields + custom fields),
  *                Transactions tab (paid invoices table), and
- *                Reports tab (income trend table, balance trend, income by month,
+ *                Reports tab (income trend table, income by month,
  *                             funding status pie).
  *
  * Depends on: jQuery, Chart.js v4
@@ -508,6 +508,10 @@ $(function () {
                             <span class="ov-kpi-label">Avg Deficit</span>
                             <span class="ov-kpi-value" id="ov-avg-deficit">&#8230;</span>
                         </div>
+                        <div class="ov-kpi-card">
+                            <span class="ov-kpi-label">Support Account Balance</span>
+                            <span class="ov-kpi-value" id="ov-support-balance">&#8230;</span>
+                        </div>
                     </div>
                     <div class="ov-wrap">${overviewRows}</div>
                     <div id="ov-attachments" class="ov-attachments-strip"></div>
@@ -532,23 +536,12 @@ $(function () {
                             </div>
                         </section>
 
-                        <div class="report-charts-row">
-                            <section class="report-section">
-                                <h3 class="report-title">Balance Trend</h3>
-                                <p class="report-subtitle">
-                                    Yearly Support Target: ${escHtml(formatCurrency(rpt.totalYearlySupport))}
-                                </p>
-                                <div class="report-chart-wrap">
-                                    <canvas id="rpt-balance"></canvas>
-                                </div>
-                            </section>
-                            <section class="report-section">
-                                <h3 class="report-title">Income by Month</h3>
-                                <div class="report-chart-wrap">
-                                    <canvas id="rpt-income"></canvas>
-                                </div>
-                            </section>
-                        </div>
+                        <section class="report-section">
+                            <h3 class="report-title">Income by Month</h3>
+                            <div class="report-chart-wrap">
+                                <canvas id="rpt-income"></canvas>
+                            </div>
+                        </section>
 
                         <section class="report-section">
                             <h3 class="report-title">Funding Status</h3>
@@ -842,6 +835,9 @@ $(function () {
         // Populate Monthly Pledges and Avg Deficit KPIs in the Overview bar.
         loadOvPledgesTotal(item, rpt.monthlyAvg, msrMonthlyRequired);
 
+        // Populate the Support Account Balance KPI in the Overview bar.
+        loadOvSupportBalance(item);
+
         // Populate the Overview attachments strip.
         loadOvAttachments(item.item_id);
 
@@ -858,8 +854,8 @@ $(function () {
                 });
                 renderTransactionsTab($txnPane, transactions);
 
-                // Re-draw Balance Trend and Income by Month with item-specific figures.
-                if (!document.getElementById('rpt-balance')) return;
+                // Re-draw Income by Month with item-specific figures.
+                if (!document.getElementById('rpt-income')) return;
                 const rptAccurate = buildReportData(transactions, msrMonthlyRequired);
                 initReportCharts(rptAccurate);
                 $('#ov-income-tbl tbody').html(buildIncomeTblRows(rptAccurate));
@@ -1201,6 +1197,24 @@ $(function () {
                 });
             })
             .fail(function () { $pledges.text('—'); });
+    }
+
+    function loadOvSupportBalance(item) {
+        const $balance = $('#ov-support-balance');
+        if (!$balance.length) return;
+
+        apiGet(PROXY + '?endpoint=books_support_balance&item_id=' + encodeURIComponent(item.item_id))
+            .done(function (res) {
+                const d = res.data || {};
+                if (!d.found || d.balance === null) {
+                    $balance.text('—');
+                    return;
+                }
+                $balance.text(formatCurrencyExact(d.balance))
+                    .toggleClass('kpi-deficit', d.balance < 0)
+                    .toggleClass('kpi-surplus', d.balance >= 0);
+            })
+            .fail(function () { $balance.text('—'); });
     }
 
     function renderSupportTab($pane, item, msrMonthly) {
@@ -1798,10 +1812,7 @@ $(function () {
         // ── 3. Yearly support target — from MSR Monthly Support Required × 12 ──
         const totalYearlySupport = (msrMonthly || 0) * 12;
 
-        // ── 4. Balance per month = Yearly Support − cumulative income ────────
-        const balance = cumulativeIncome.map(c => totalYearlySupport - c);
-
-        // ── 5. Pie chart — last 12 months income vs MSR yearly target ────────
+        // ── 4. Pie chart — last 12 months income vs MSR yearly target ────────
         const percentFunded      = totalYearlySupport > 0
             ? Math.min(100, (yearTotal / totalYearlySupport) * 100)
             : 0;
@@ -1814,7 +1825,6 @@ $(function () {
             monthLabels,
             monthlyIncome,
             cumulativeIncome,
-            balance,
             yearTotal,
             monthlyAvg,
             totalYearlySupport,
@@ -1846,18 +1856,6 @@ $(function () {
                 },
             },
         });
-
-        // Balance Trend (green)
-        _createChart('rpt-balance', lineOpts([{
-            label: 'Balance',
-            data: rpt.balance,
-            borderColor: '#10b981',
-            backgroundColor: 'rgba(16,185,129,0.10)',
-            fill: true,
-            tension: 0.35,
-            pointRadius: 4,
-            pointHoverRadius: 6,
-        }]));
 
         // Income by Month (blue)
         _createChart('rpt-income', lineOpts([{
@@ -1918,6 +1916,14 @@ $(function () {
     function formatCurrency(amount) {
         return new Intl.NumberFormat('en-AU', {
             style: 'currency', currency: 'AUD', maximumFractionDigits: 0,
+        }).format(amount);
+    }
+
+    // Exact currency value — no rounding to whole dollars, cents preserved as-is.
+    function formatCurrencyExact(amount) {
+        return new Intl.NumberFormat('en-AU', {
+            style: 'currency', currency: 'AUD',
+            minimumFractionDigits: 2, maximumFractionDigits: 2,
         }).format(amount);
     }
 

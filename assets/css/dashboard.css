@@ -989,8 +989,6 @@ body.app-body {
     .tab-pane      { padding: 1rem; }
     .overview-grid { grid-template-columns: 1fr; }
     .site-header h1 { font-size: 1rem; }
-    .report-charts-row { grid-template-columns: 1fr; }
-
 }
 
 /* ---------------------------------------------------------
@@ -1379,12 +1377,6 @@ body.app-body {
     font-size: 0.8rem;
     color: var(--colour-muted);
     margin: -6px 0 4px;
-}
-
-.report-charts-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 24px;
 }
 
 .report-chart-wrap {
@@ -1957,4 +1949,157 @@ body.app-body {
     flex-shrink: 0;
 }
 .ov-att-file:hover { border-color: var(--colour-primary); color: var(--colour-primary); }
+
+/* ---------------------------------------------------------
+   Auth pages (login / forgot / reset password)
+   --------------------------------------------------------- */
+.auth-body {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--colour-bg);
+}
+.auth-card {
+    width: 100%;
+    max-width: 380px;
+    background: var(--colour-card);
+    border: 1px solid var(--colour-border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 2rem 2rem 1.5rem;
+    margin: 1rem;
+}
+.auth-title {
+    font-size: 1.25rem;
+    color: var(--colour-primary);
+    margin-bottom: 4px;
+}
+.auth-subtitle {
+    font-size: 0.85rem;
+    color: var(--colour-muted);
+    margin-bottom: 1.25rem;
+}
+.auth-form {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.auth-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--colour-text);
+    margin-top: 10px;
+}
+.auth-input {
+    padding: 9px 11px;
+    border: 1px solid var(--colour-border);
+    border-radius: var(--radius);
+    font-size: 0.9rem;
+    font-family: inherit;
+}
+.auth-input:focus {
+    outline: none;
+    border-color: var(--colour-secondary);
+}
+.auth-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 500;
+}
+.auth-submit {
+    margin-top: 1.25rem;
+    padding: 10px;
+    background: var(--colour-primary);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius);
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+.auth-submit:hover { background: var(--colour-secondary); }
+.auth-submit:disabled { opacity: 0.6; cursor: not-allowed; }
+.auth-error {
+    margin-top: 10px;
+    font-size: 0.8rem;
+    color: var(--colour-danger);
+}
+.auth-success {
+    margin-top: 10px;
+    font-size: 0.8rem;
+    color: var(--colour-success);
+}
+.auth-footnote {
+    margin-top: 1rem;
+    font-size: 0.8rem;
+    color: var(--colour-muted);
+    text-align: center;
+}
+.auth-footnote a { color: var(--colour-secondary); }
+
+.site-header-user {
+    color: #fff;
+    font-size: 0.85rem;
+    margin-right: 12px;
+    opacity: 0.9;
+}
+
+/* ---------------------------------------------------------
+   User management page
+   --------------------------------------------------------- */
+.page-user-mgmt {
+    max-width: 900px;
+    margin: 1.5rem auto;
+    padding: 0 1rem;
+}
+.um-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+}
+.um-new-btn {
+    margin-top: 0;
+    width: auto;
+    padding: 8px 16px;
+}
+.um-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+}
+.um-modal[hidden] {
+    display: none;
+}
+.um-modal-inner {
+    width: 100%;
+    max-width: 420px;
+    background: var(--colour-card);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    margin: 1rem;
+}
+.um-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 14px;
+}
+.um-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 1.25rem;
+}
+.um-modal-actions button {
+    margin-top: 0;
+    padding: 8px 18px;
+    font-size: 0.85rem;
+}
 .ov-att-thumb:hover { border-color: var(--colour-primary); }
