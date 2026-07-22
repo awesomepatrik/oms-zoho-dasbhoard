@@ -1483,16 +1483,30 @@ $(function () {
             const newGrip    = '<td class="fd-drag-col"><span class="fd-drag-handle" title="Drag to reorder"><svg width="8" height="14" viewBox="0 0 8 14" fill="currentColor"><circle cx="2" cy="2" r="1.4"/><circle cx="6" cy="2" r="1.4"/><circle cx="2" cy="7" r="1.4"/><circle cx="6" cy="7" r="1.4"/><circle cx="2" cy="12" r="1.4"/><circle cx="6" cy="12" r="1.4"/></svg></span></td>';
             const newActions = '<td class="fd-row-actions"><button class="fd-del-row-btn" title="Delete">&times;</button></td>';
 
-            $section.on('click', '.fd-add-row', function () {
+            // Track the row the cursor is currently in, so "+ Row" / "+ Section"
+            // insert right below it instead of always at the end of the table.
+            let $lastFocusedRow = null;
+            $section.on('focusin', '.fd-table td[contenteditable]', function () {
+                $lastFocusedRow = $(this).closest('tr');
+            });
+
+            function insertRow($newRow) {
                 const $tbody = $section.find('.fd-table tbody');
-                $tbody.append('<tr>' + newGrip + '<td contenteditable="true"></td><td contenteditable="true"></td>' + newActions + '</tr>');
-                $tbody.find('tr:last-child td[contenteditable]').first().focus();
+                if ($lastFocusedRow && $lastFocusedRow.closest('tbody')[0] === $tbody[0]) {
+                    $newRow.insertAfter($lastFocusedRow);
+                } else {
+                    $tbody.append($newRow);
+                }
+                $lastFocusedRow = $newRow;
+                $newRow.find('td[contenteditable]').first().focus();
+            }
+
+            $section.on('click', '.fd-add-row', function () {
+                insertRow($('<tr>' + newGrip + '<td contenteditable="true"></td><td contenteditable="true"></td>' + newActions + '</tr>'));
             });
 
             $section.on('click', '.fd-add-section', function () {
-                const $tbody = $section.find('.fd-table tbody');
-                $tbody.append('<tr class="fd-header-row">' + newGrip + '<td class="fd-header-cell" colspan="2" contenteditable="true"></td>' + newActions + '</tr>');
-                $tbody.find('tr:last-child td[contenteditable]').first().focus();
+                insertRow($('<tr class="fd-header-row">' + newGrip + '<td class="fd-header-cell" colspan="2" contenteditable="true"></td>' + newActions + '</tr>'));
             });
 
             $section.on('click', '.fd-del-row-btn', function () {
