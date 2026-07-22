@@ -9,6 +9,9 @@ zoho-dashboard-config/cache/
 # Locally cached contact attachment files (populated at runtime)
 zoho-dashboard/uploads/
 
+# Composer dependencies (installed via `composer install`)
+/vendor/
+
 # Claude Code local settings
 .claude/
 

@@ -1,29 +1,46 @@
 <?php
 /**
- * Minimal outbound mail via PHP's mail(). Used for password reset links.
- * Swap this out for SMTP/PHPMailer later without touching callers of mailer_send().
+ * Outbound mail via SMTP (PHPMailer). Used for password reset/account-setup links.
+ *
+ * Config keys (see zoho-dashboard-config/config.example.php):
+ *   smtp_host, smtp_port, smtp_username, smtp_password, smtp_encryption ('tls'|'ssl'),
+ *   mail_from, mail_from_name
  */
 
 require_once __DIR__ . '/helpers.php';
+require_once __DIR__ . '/../vendor/autoload.php';
+
+use PHPMailer\PHPMailer\PHPMailer;
+use PHPMailer\PHPMailer\Exception as PHPMailerException;
 
 function mailer_send(string $toEmail, string $toName, string $subject, string $bodyText): bool
 {
-    $cfg      = get_config();
-    $fromAddr = $cfg['mail_from'] ?? 'no-reply@localhost';
-    $fromName = $cfg['mail_from_name'] ?? 'Dashboard';
+    $cfg = get_config();
 
-    $headers = implode("\r\n", [
-        'From: ' . sprintf('%s <%s>', mb_encode_mimeheader($fromName), $fromAddr),
-        'Content-Type: text/plain; charset=UTF-8',
-        'X-Mailer: PHP/' . phpversion(),
-    ]);
+    $mail = new PHPMailer(true);
+    try {
+        $mail->isSMTP();
+        $mail->Host       = $cfg['smtp_host'] ?? '';
+        $mail->Port       = (int)($cfg['smtp_port'] ?? 587);
+        $mail->SMTPAuth   = true;
+        $mail->Username   = $cfg['smtp_username'] ?? '';
+        $mail->Password   = $cfg['smtp_password'] ?? '';
+        $mail->SMTPSecure = ($cfg['smtp_encryption'] ?? 'tls') === 'ssl'
+            ? PHPMailer::ENCRYPTION_SMTPS
+            : PHPMailer::ENCRYPTION_STARTTLS;
+        $mail->CharSet    = 'UTF-8';
 
-    $encodedSubject = mb_encode_mimeheader($subject, 'UTF-8');
-    $to             = sprintf('%s <%s>', mb_encode_mimeheader($toName), $toEmail);
+        $mail->setFrom($cfg['mail_from'] ?? 'no-reply@localhost', $cfg['mail_from_name'] ?? 'Dashboard');
+        $mail->addAddress($toEmail, $toName);
 
-    $sent = @mail($to, $encodedSubject, $bodyText, $headers);
-    if (!$sent) {
-        error_log("mailer_send: failed to send to {$toEmail} — subject: {$subject}");
+        $mail->isHTML(false);
+        $mail->Subject = $subject;
+        $mail->Body    = $bodyText;
+
+        $mail->send();
+        return true;
+    } catch (PHPMailerException $e) {
+        error_log("mailer_send: failed to send to {$toEmail} — subject: {$subject} — " . $mail->ErrorInfo);
+        return false;
     }
-    return $sent;
 }

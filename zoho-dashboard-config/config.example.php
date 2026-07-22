@@ -52,9 +52,23 @@ return [
     'db_charset' => 'utf8mb4',
 
     // -------------------------------------------------------------------------
-    // Outbound mail (password reset emails) — sent via PHP's mail()
+    // Outbound mail (password reset / account setup emails) — sent via SMTP
+    // (see lib/Mailer.php, PHPMailer). For Gmail/Google Workspace:
+    //   - smtp_host: smtp.gmail.com, smtp_port: 587, smtp_encryption: 'tls'
+    //   - smtp_username: your full Gmail address
+    //   - smtp_password: an App Password, NOT your normal Google password —
+    //     generate one at https://myaccount.google.com/apppasswords
+    //     (requires 2-Step Verification to be enabled on the account)
+    //   - mail_from: Gmail silently rewrites the From header to the
+    //     authenticated account unless it's a verified "Send As" alias, so
+    //     keep this the same as smtp_username unless you've set one up.
     // -------------------------------------------------------------------------
-    'mail_from'      => 'no-reply@example.org',
-    'mail_from_name' => 'Mission Agency Dashboard',
+    'smtp_host'       => 'smtp.gmail.com',
+    'smtp_port'       => 587,
+    'smtp_encryption' => 'tls', // 'tls' (port 587) or 'ssl' (port 465)
+    'smtp_username'   => 'YOUR_GMAIL_ADDRESS',
+    'smtp_password'   => 'YOUR_APP_PASSWORD',
+    'mail_from'       => 'YOUR_GMAIL_ADDRESS',
+    'mail_from_name'  => 'Mission Agency Dashboard',
 
 ];

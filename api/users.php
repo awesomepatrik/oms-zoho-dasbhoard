@@ -5,6 +5,7 @@
  * GET  api/users.php?action=list
  * POST api/users.php?action=create  { name, email, role, csrf_token }
  * POST api/users.php?action=update  { id, name, email, role, is_active, csrf_token }
+ * POST api/users.php?action=delete  { id, csrf_token }
  */
 
 require_once __DIR__ . '/../lib/helpers.php';
@@ -63,6 +64,23 @@ switch ($action) {
             error_out($result['error'], 400);
         }
         json_response(['success' => true, 'user' => Auth::findById($id)]);
+        break;
+
+    case 'delete':
+        $id = (int)($input['id'] ?? 0);
+
+        if ($id <= 0) {
+            error_out('Missing user id.', 400);
+        }
+        if ($id === Auth::id()) {
+            error_out('You cannot remove your own account.', 400);
+        }
+
+        $result = Auth::deleteUser($id);
+        if (!$result['ok']) {
+            error_out($result['error'], 400);
+        }
+        json_response(['success' => true]);
         break;
 
     default:

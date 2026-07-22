@@ -86,11 +86,13 @@ $(function () {
             const isSelf = user.id === currentUserId;
             $('#um-form-role').prop('disabled', isSelf);
             $('#um-form-active').prop('disabled', isSelf);
+            $('#um-delete-btn').prop('hidden', isSelf).data('id', user.id).data('name', user.name);
         } else {
             $('#um-modal-title').text('New user');
             $('#um-form-id').val('');
             $('#um-form-role').prop('disabled', false).val('staff');
             $('#um-form-active').prop('disabled', false).prop('checked', true);
+            $('#um-delete-btn').prop('hidden', true);
         }
         $('#um-modal').prop('hidden', false);
     }
@@ -103,6 +105,25 @@ $(function () {
     $('#um-cancel-btn').on('click', closeModal);
     $('#um-modal').on('click', function (e) {
         if (e.target.id === 'um-modal') closeModal();
+    });
+
+    $('#um-delete-btn').on('click', function () {
+        const id   = $(this).data('id');
+        const name = $(this).data('name');
+        if (!confirm('Remove ' + name + '? This permanently deletes their account and cannot be undone.')) return;
+
+        const $error = $('#um-form-error').prop('hidden', true);
+        $(this).prop('disabled', true);
+
+        apiPost('delete', { id: id })
+            .done(function () {
+                closeModal();
+                loadUsers();
+            })
+            .fail(function (jqXHR) {
+                $error.text(errorMessage(jqXHR, 'Could not remove user.')).prop('hidden', false);
+            })
+            .always(() => $('#um-delete-btn').prop('disabled', false));
     });
 
     $('#um-table-wrap').on('click', '.um-edit-btn', function () {

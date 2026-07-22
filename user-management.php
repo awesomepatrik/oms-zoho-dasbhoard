@@ -76,6 +76,7 @@ $me        = Auth::user();
                 <p class="auth-error" id="um-form-error" hidden></p>
 
                 <div class="um-modal-actions">
+                    <button type="button" id="um-delete-btn" class="btn-msr-action um-btn-danger" hidden>Remove user</button>
                     <button type="button" id="um-cancel-btn" class="btn-msr-action btn-msr-cancel">Cancel</button>
                     <button type="submit" class="auth-submit">Save</button>
                 </div>

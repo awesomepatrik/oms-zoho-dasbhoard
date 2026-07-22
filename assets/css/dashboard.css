@@ -2102,4 +2102,13 @@ body.app-body {
     padding: 8px 18px;
     font-size: 0.85rem;
 }
+.um-btn-danger {
+    margin-right: auto;
+    color: var(--colour-danger);
+    border-color: var(--colour-danger);
+}
+.um-btn-danger:hover {
+    background: var(--colour-danger);
+    color: #fff;
+}
 .ov-att-thumb:hover { border-color: var(--colour-primary); }

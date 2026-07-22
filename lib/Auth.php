@@ -298,6 +298,18 @@ class Auth
         return ['ok' => true];
     }
 
+    /**
+     * @return array{ok:bool, error?:string}
+     */
+    public static function deleteUser(int $id): array
+    {
+        if (!self::findById($id)) {
+            return ['ok' => false, 'error' => 'User not found.'];
+        }
+        db()->prepare('DELETE FROM users WHERE id = :id')->execute(['id' => $id]);
+        return ['ok' => true];
+    }
+
     // -------------------------------------------------------------------
     // Password reset (also used as the initial "set your password" step)
     // -------------------------------------------------------------------
