@@ -143,15 +143,15 @@ function books_filterItemsByRecipientEmail(array $items, string $email): array
 }
 
 /**
- * Filter a list of items down to those that are NOT explicitly marked
- * inactive via the custom "Status" field. An item with no value in that
- * field (the vast majority today) is treated as active and kept.
+ * Filter a list of items down to those where the custom "Status" field is
+ * explicitly set to "Active". Items with no value in that field (or any
+ * other value) are excluded.
  */
 function books_filterActiveItems(array $items): array
 {
     return array_values(array_filter($items, function (array $item): bool {
         $value = $item['cf_status'] ?? '';
-        return strtolower(trim((string)$value)) !== 'inactive';
+        return strtolower(trim((string)$value)) === 'active';
     }));
 }
 

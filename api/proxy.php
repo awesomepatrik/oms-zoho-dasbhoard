@@ -25,10 +25,10 @@ require_once __DIR__ . '/crm.php';
 Auth::requireLoginApi();
 
 /**
- * Item list scoped to the current user: items explicitly marked inactive
- * (custom "Status" field) are excluded for everyone; staff additionally
+ * Item list scoped to the current user: only items whose custom "Status"
+ * field is exactly "Active" are included, for everyone; staff additionally
  * only see items whose "Recipient Group Email" custom field matches their
- * own login email, while admins see every active item.
+ * own login email.
  */
 function books_getItemsForCurrentUser(string $token): array
 {
