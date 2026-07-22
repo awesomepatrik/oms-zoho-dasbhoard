@@ -1,11 +1,15 @@
 # Feature prompt: Login & User Management
 
-**Status: implemented (2026-07-21).** Decisions made on the open questions
-below: MySQL for storage, admin-provisioned accounts (no public signup),
-password reset emails via PHP's `mail()`, and the entire existing dashboard
-now requires login. See `CLAUDE.md` → "Login & user management" for the
-quick-reference (schema location, bootstrap command). This brief is kept as
-the record of what was decided and why.
+**Status: implemented (2026-07-21), updated (2026-07-22).** Decisions made on
+the open questions below: MySQL for storage, admin-provisioned accounts (no
+public signup), and the entire existing dashboard now requires login.
+Password reset/account-setup emails initially used PHP's `mail()` but that
+failed silently in local testing, so it was swapped to SMTP via PHPMailer
+(`lib/Mailer.php`) — see the Production deployment section below for the
+current setup, not the mail() references elsewhere in this brief. See
+`CLAUDE.md` → "Login & user management" for the quick-reference (schema
+location, bootstrap command). This brief is kept as the record of what was
+decided and why.
 
 Use this as the implementation brief for adding authentication and role-based
 user management to the OMS Zoho Dashboard. Paste it into a new session/task
@@ -152,10 +156,18 @@ CREATE TABLE password_resets (
 Steps to take this live on the production server, in order:
 
 1. **Deploy the code** (git pull / rsync / your normal process). `config.php`,
-   `tokens.json`, and `cache/` are gitignored and won't come across — that's
-   expected, handle them separately below.
+   `tokens.json`, `cache/`, and `vendor/` are gitignored and won't come
+   across — that's expected, handle them below.
 
-2. **Create the production database.** Run the schema against a real DB
+2. **Install Composer dependencies** (PHPMailer, added for SMTP email):
+   ```
+   composer install --no-dev
+   ```
+   Run this in the project root on the server. `vendor/` is gitignored by
+   design (standard Composer practice) — it must be generated on the server,
+   not copied from dev.
+
+3. **Create the production database.** Run the schema against a real DB
    (don't reuse dev credentials):
    ```
    mysql -u <prod_user> -p < zoho-dashboard-config/schema.sql
@@ -163,17 +175,24 @@ Steps to take this live on the production server, in order:
    Or create the database first and adjust the `CREATE DATABASE` name in
    `schema.sql` if production naming conventions differ.
 
-3. **Fill in `zoho-dashboard-config/config.php`** on the server (copy from
-   `config.example.php` if it doesn't exist yet) with the production values
-   for `db_host` / `db_name` / `db_user` / `db_pass` / `db_charset`, and
-   `mail_from` / `mail_from_name`. This file is never committed — it has to
-   be created/edited directly on the server (or via your secrets pipeline).
+4. **Fill in `zoho-dashboard-config/config.php`** on the server (copy from
+   `config.example.php` if it doesn't exist yet) with production values for:
+   - `db_host` / `db_name` / `db_user` / `db_pass` / `db_charset`
+   - `smtp_host` / `smtp_port` / `smtp_encryption` / `smtp_username` /
+     `smtp_password` / `mail_from` / `mail_from_name` — see the comments in
+     `config.example.php` for Gmail App Password setup if using Gmail/Google
+     Workspace; use a dedicated SMTP provider (SES, SendGrid, Mailgun, etc.)
+     if you want better production deliverability than a personal Gmail
+     account.
 
-4. **Confirm `pdo_mysql` is enabled** in the production PHP (`php -m | grep pdo_mysql`).
-   Most hosts have it, but it's the one dependency this feature adds that
+   This file is never committed — it has to be created/edited directly on
+   the server (or via your secrets pipeline).
+
+5. **Confirm `pdo_mysql` is enabled** in the production PHP (`php -m | grep pdo_mysql`).
+   Most hosts have it, but it's the one PHP extension this feature adds that
    wasn't there before.
 
-5. **Verify `.htaccess` is actually being honoured.** This is the step most
+6. **Verify `.htaccess` is actually being honoured.** This is the step most
    likely to silently fail: `zoho-dashboard-config/.htaccess` (denies all web
    access to config/tokens/schema) and the root `.htaccess` (denies `lib/`
    and `bin/`) only work if the vhost has `AllowOverride All` (or at least
@@ -187,30 +206,41 @@ Steps to take this live on the production server, in order:
    ```
    Both must return 403, not 200 or the file/script's own output.
 
-6. **Confirm outbound mail actually works** before relying on it. Locally,
-   PHP's `mail()` failed silently (no local MTA in this XAMPP setup) — that
-   may or may not be true on the production host. Trigger a real
-   forgot-password request against production and confirm the email lands
-   (check spam too). If it doesn't work, either configure `sendmail` on the
-   server or swap `lib/Mailer.php` for real SMTP (e.g. PHPMailer) — the rest
-   of the app only calls `mailer_send()`, so that's a one-file change.
+7. **Confirm SMTP delivery actually works** before relying on it. Send a
+   one-off test from the server:
+   ```
+   php -r 'require_once "lib/Mailer.php"; var_dump(mailer_send("you@example.org", "Test", "Subject", "Body"));'
+   ```
+   If it returns `false`, check `error_log` for PHPMailer's `ErrorInfo` —
+   common causes are a wrong App Password, the SMTP port being blocked
+   outbound by the host/firewall, or `smtp_encryption` not matching the port
+   (587 → `tls`, 465 → `ssl`).
 
-7. **Confirm HTTPS.** `Auth::boot()` only sets the session cookie's `secure`
+8. **Confirm HTTPS.** `Auth::boot()` only sets the session cookie's `secure`
    flag when `$_SERVER['HTTPS']` is set. If production sits behind a
    reverse proxy/load balancer that terminates TLS before PHP sees the
    request, `$_SERVER['HTTPS']` may not be set even though the site is
    served over HTTPS — check this, since it affects whether the session
    cookie gets the `secure` flag.
 
-8. **Bootstrap the first admin**, once the DB and config are live:
+9. **Bootstrap the first admin**, once the DB and config are live:
    ```
    php bin/create_admin.php "Full Name" admin@example.org "a-strong-password"
    ```
    Run this on the server (SSH/CLI), not through the browser — `bin/` is
-   web-blocked by design (step 5 confirms that).
+   web-blocked by design (step 6 confirms that).
 
-9. **Smoke test**: log in as that admin, confirm `user-management.php`
-   loads, create a second (staff) account, confirm the emailed "set your
-   password" link works end-to-end, and confirm a staff login only sees
-   their own item in the sidebar (see "Scope to current user" behaviour in
-   `api/proxy.php`).
+10. **Populate the "Status" custom field in Zoho Books before expecting any
+    items to show up.** As of 2026-07-22, `api/books.php`
+    (`books_filterActiveItems()`) requires an item's custom "Status" field
+    to be exactly `"Active"` — items with no value there (the default for
+    most items today) are excluded. If production Zoho Books items don't
+    have this field set, the sidebar will be empty even though everything
+    else works. Set it on the items that should be visible before rolling
+    this out to real users.
+
+11. **Smoke test**: log in as that admin, confirm `user-management.php`
+    loads, create a second (staff) account, confirm the emailed "set your
+    password" link works end-to-end, confirm the sidebar shows the expected
+    active items, and confirm a staff login only sees their own item (see
+    "Scope to current user" behaviour in `api/proxy.php`).
