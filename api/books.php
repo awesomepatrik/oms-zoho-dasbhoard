@@ -428,27 +428,20 @@ function books_getRecurringByItem(string $token, string $itemId): array
 }
 
 /**
- * Fetch the Support Account (Reserve) balance for an item.
+ * Look up a single Chart of Accounts entry by its exact name and return its
+ * closing balance.
  *
- * 1. Resolve the item's name, then look up the Chart of Accounts entry named
- *    "{item name} - Reserve" via GET /chartofaccounts?account_name=...
+ * 1. List Chart of Accounts filtered by account_name via
+ *    GET /chartofaccounts?account_name=...
  * 2. Fetch that account's detail via GET /chartofaccounts/{account_id} and
- *    read its balance.
+ *    read its closing balance.
  */
-function books_getSupportAccountBalance(string $token, string $itemId): array
+function books_getAccountBalanceByName(string $token, string $targetName): array
 {
     $cfg     = get_config();
     $baseUrl = rtrim($cfg['books_api_base'], '/');
     $orgQs   = http_build_query(['organization_id' => $cfg['books_org_id']]);
 
-    $item     = books_getItemDetail($token, $itemId);
-    $itemName = trim($item['name'] ?? '');
-    if ($itemName === '') {
-        return ['account_name' => null, 'balance' => null, 'found' => false];
-    }
-    $targetName = $itemName . ' - Reserve';
-
-    // 1. List Chart of Accounts filtered by account_name.
     $listUrl = "{$baseUrl}/chartofaccounts?{$orgQs}&" . http_build_query([
         'account_name' => $targetName,
         'showbalance'  => 'true',
@@ -468,7 +461,6 @@ function books_getSupportAccountBalance(string $token, string $itemId): array
         return ['account_name' => $targetName, 'balance' => null, 'found' => false];
     }
 
-    // 2. Get the account detail for its closing balance.
     $detailUrl = "{$baseUrl}/chartofaccounts/" . rawurlencode($accountId)
                . "?{$orgQs}&" . http_build_query(['showbalance' => 'true']);
     $detailResp = books_get($token, $detailUrl);
@@ -484,6 +476,43 @@ function books_getSupportAccountBalance(string $token, string $itemId): array
         'account_name' => $account['account_name'] ?? $targetName,
         'balance'      => $balance !== null ? (float)$balance : null,
         'found'        => true,
+    ];
+}
+
+/**
+ * Compute the Support Account balance for an item as:
+ *   (Income closing balance + Reserve closing balance) - Expense closing balance
+ *
+ * Resolves the item's name, then looks up the three per-item Chart of
+ * Accounts entries named "{item name} - Income", "{item name} - Reserve",
+ * and "{item name} - Expense". Any account not found contributes 0 to the
+ * total but is reported individually so the caller can tell what's missing.
+ */
+function books_getSupportAccountBalance(string $token, string $itemId): array
+{
+    $item     = books_getItemDetail($token, $itemId);
+    $itemName = trim($item['name'] ?? '');
+    if ($itemName === '') {
+        return ['balance' => null, 'found' => false];
+    }
+
+    $income  = books_getAccountBalanceByName($token, $itemName . ' - Income');
+    $reserve = books_getAccountBalanceByName($token, $itemName . ' - Reserve');
+    $expense = books_getAccountBalanceByName($token, $itemName . ' - Expense');
+
+    $found = $income['found'] || $reserve['found'] || $expense['found'];
+    if (!$found) {
+        return ['balance' => null, 'found' => false, 'income' => $income, 'reserve' => $reserve, 'expense' => $expense];
+    }
+
+    $balance = ($income['balance'] ?? 0) + ($reserve['balance'] ?? 0) - ($expense['balance'] ?? 0);
+
+    return [
+        'balance' => $balance,
+        'found'   => true,
+        'income'  => $income,
+        'reserve' => $reserve,
+        'expense' => $expense,
     ];
 }
 
