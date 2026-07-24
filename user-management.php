@@ -65,6 +65,7 @@ $me        = Auth::user();
                 <label class="auth-label" for="um-form-role">Role</label>
                 <select class="auth-input" id="um-form-role" name="role">
                     <option value="staff">Staff</option>
+                    <option value="viewer">Viewer</option>
                     <option value="admin">Admin</option>
                 </select>
 

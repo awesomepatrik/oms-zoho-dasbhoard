@@ -66,6 +66,11 @@ class Auth
         return self::role() === 'admin';
     }
 
+    public static function isViewer(): bool
+    {
+        return self::role() === 'viewer';
+    }
+
     /** Full current-user row (id, name, email, role) or null. Re-reads DB. */
     public static function user(): ?array
     {
@@ -112,6 +117,15 @@ class Auth
         self::requireLoginApi();
         if (self::role() === $role) return;
         json_response(['error' => 'forbidden'], 403);
+    }
+
+    /** Call at the top of a write (create/update/delete) api/*.php endpoint. JSON 403 for the read-only Viewer role. */
+    public static function requireEditApi(): void
+    {
+        self::requireLoginApi();
+        if (self::isViewer()) {
+            json_response(['error' => 'forbidden'], 403);
+        }
     }
 
     // -------------------------------------------------------------------
@@ -250,7 +264,7 @@ class Auth
         if ($name === '' || $email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             return ['ok' => false, 'error' => 'A valid name and email are required.'];
         }
-        if (!in_array($role, ['admin', 'staff'], true)) {
+        if (!in_array($role, ['admin', 'staff', 'viewer'], true)) {
             return ['ok' => false, 'error' => 'Invalid role.'];
         }
         if (self::findByEmail($email)) {
@@ -279,7 +293,7 @@ class Auth
         if ($name === '' || $email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             return ['ok' => false, 'error' => 'A valid name and email are required.'];
         }
-        if (!in_array($role, ['admin', 'staff'], true)) {
+        if (!in_array($role, ['admin', 'staff', 'viewer'], true)) {
             return ['ok' => false, 'error' => 'Invalid role.'];
         }
 

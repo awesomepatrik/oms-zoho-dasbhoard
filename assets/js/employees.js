@@ -15,6 +15,7 @@
 $(function () {
 
     const PROXY = '/oms-zoho-dashboard/api/proxy.php';
+    const IS_VIEWER = document.body.dataset.role === 'viewer';
 
     let allEmployees      = [];
     let pmMap             = {};   // item_id => { pm_id, pm_name }
@@ -571,9 +572,11 @@ $(function () {
                     <div class="msr-layout" data-lc-col-count="${lcColCount}">
 
                         <div class="msr-toolbar">
+                            ${IS_VIEWER ? '' : `
                             <button id="btn-msr-edit" class="btn-msr-action">Edit</button>
                             <button id="btn-msr-save" class="btn-msr-action btn-msr-save is-hidden">Save</button>
                             <button id="btn-msr-cancel" class="btn-msr-action btn-msr-cancel is-hidden">Cancel</button>
+                            `}
                             <button id="btn-msr-refresh" class="btn-msr-action btn-msr-refresh" title="Reload from Zoho Books">&#8635; Refresh</button>
                             <span id="msr-save-status" class="msr-save-status"></span>
                         </div>
@@ -1415,8 +1418,13 @@ $(function () {
             const rows = parseFlowCsv(flowCsv);
             // Section header: col2 empty AND col1 is a plain name (letters/spaces/& only)
             const namePattern = /^[A-Za-z\s&']+$/;
-            const grip    = `<td class="fd-drag-col"><span class="fd-drag-handle" title="Drag to reorder"><svg width="8" height="14" viewBox="0 0 8 14" fill="currentColor"><circle cx="2" cy="2" r="1.4"/><circle cx="6" cy="2" r="1.4"/><circle cx="2" cy="7" r="1.4"/><circle cx="6" cy="7" r="1.4"/><circle cx="2" cy="12" r="1.4"/><circle cx="6" cy="12" r="1.4"/></svg></span></td>`;
-            const actions = `<td class="fd-row-actions"><button class="fd-del-row-btn" title="Delete">&times;</button></td>`;
+            const editAttr = IS_VIEWER ? '' : ' contenteditable="true"';
+            const grip    = IS_VIEWER
+                ? '<td class="fd-drag-col"></td>'
+                : `<td class="fd-drag-col"><span class="fd-drag-handle" title="Drag to reorder"><svg width="8" height="14" viewBox="0 0 8 14" fill="currentColor"><circle cx="2" cy="2" r="1.4"/><circle cx="6" cy="2" r="1.4"/><circle cx="2" cy="7" r="1.4"/><circle cx="6" cy="7" r="1.4"/><circle cx="2" cy="12" r="1.4"/><circle cx="6" cy="12" r="1.4"/></svg></span></td>`;
+            const actions = IS_VIEWER
+                ? '<td class="fd-row-actions"></td>'
+                : `<td class="fd-row-actions"><button class="fd-del-row-btn" title="Delete">&times;</button></td>`;
             const tbodyHtml = rows.map(function (r) {
                 // Blank row → thin spacer
                 if (r[0].trim() === '' && r[1].trim() === '') {
@@ -1424,20 +1432,22 @@ $(function () {
                 }
                 // Section header (person name)
                 if (r[1] === '' && r[0].trim() !== '' && namePattern.test(r[0].trim())) {
-                    return `<tr class="fd-header-row">${grip}<td class="fd-header-cell" colspan="2" contenteditable="true">${escHtml(r[0])}</td>${actions}</tr>`;
+                    return `<tr class="fd-header-row">${grip}<td class="fd-header-cell" colspan="2"${editAttr}>${escHtml(r[0])}</td>${actions}</tr>`;
                 }
                 // Data row — right-align purely numeric values
                 const valClass = /^[\d,./\-]+$/.test(r[1].trim()) ? ' class="fd-val-num"' : '';
-                return `<tr>${grip}<td contenteditable="true">${escHtml(r[0])}</td><td contenteditable="true"${valClass}>${escHtml(r[1])}</td>${actions}</tr>`;
+                return `<tr>${grip}<td${editAttr}>${escHtml(r[0])}</td><td${editAttr}${valClass}>${escHtml(r[1])}</td>${actions}</tr>`;
             }).join('');
             return `<div class="flow-details-wrap">
                 <div class="flow-details-hd">
                     <span class="flow-details-title">Flow Details</span>
+                    ${IS_VIEWER ? '' : `
                     <div class="flow-details-actions">
                         <button class="fd-add-section" type="button">+ Section</button>
                         <button class="fd-add-row" type="button">+ Row</button>
                         <button class="fd-save" type="button">Save</button>
                     </div>
+                    `}
                 </div>
                 <div class="flow-details-body">
                     <table class="fd-table">
@@ -1454,6 +1464,7 @@ $(function () {
                     <span class="flow-section-title">${escHtml(pmName)}</span>
                     <span class="flow-section-count"></span>
                 </div>
+                ${IS_VIEWER ? '' : `
                 <div class="flow-upload-zone flow-dropzone">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="flow-zone-icon">
                         <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
@@ -1468,6 +1479,7 @@ $(function () {
                            accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
                            style="display:none">
                 </div>
+                `}
                 <div class="flow-progress" style="display:none"></div>
                 <div class="flow-list">
                     <div class="detail-loading"><span class="spinner"></span></div>
@@ -1657,7 +1669,7 @@ $(function () {
                         <span class="flow-name" title="${escAttr(f.file_name)}">${escHtml(f.file_name)}</span>
                         <span class="flow-meta">${f.uploaded_time ? escHtml(formatDate(f.uploaded_time)) : ''}${f.file_size ? ' &bull; ' + escHtml(f.file_size) : ''}</span>
                     </div>
-                    <button class="flow-del-btn" data-id="${escAttr(f.document_id)}" title="Delete">&times;</button>
+                    ${IS_VIEWER ? '' : `<button class="flow-del-btn" data-id="${escAttr(f.document_id)}" title="Delete">&times;</button>`}
                 </div>`;
             }).join(''));
             // error event doesn't bubble so delegate won't work — bind directly after DOM insert

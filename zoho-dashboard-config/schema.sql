@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS users (
     -- NULL = account created by an admin but the user hasn't set a password
     -- yet (they log in only after following the emailed activation/reset link).
     password_hash   VARCHAR(255) NULL DEFAULT NULL,
-    role            ENUM('admin', 'staff') NOT NULL DEFAULT 'staff',
+    role            ENUM('admin', 'staff', 'viewer') NOT NULL DEFAULT 'staff',
     is_active       TINYINT(1) NOT NULL DEFAULT 1,
     created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP

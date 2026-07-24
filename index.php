@@ -21,7 +21,7 @@ $me = Auth::user();
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
     <link rel="stylesheet" href="/oms-zoho-dashboard/assets/css/dashboard.css">
 </head>
-<body class="app-body">
+<body class="app-body" data-role="<?= esc($me['role'] ?? '') ?>">
 
     <header class="site-header">
         <h1>One Mission Society</h1>
