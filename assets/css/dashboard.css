@@ -1263,6 +1263,9 @@ body.app-body {
 .msr-card-funded { border-left: 3px solid var(--colour-success); }
 .msr-card-funded  .msr-summary-value { color: var(--colour-success); }
 
+.msr-summary-value.kpi-deficit { color: #ef4444; }
+.msr-summary-value.kpi-surplus { color: #10b981; }
+
 .msr-card-pct { border-left: 3px solid var(--colour-secondary); }
 
 /* Progress bar inside the % funded card */
@@ -1308,6 +1311,12 @@ body.app-body {
     background: var(--colour-card);
     border-top: 2px solid var(--colour-border);
     padding: 10px 12px 6px;
+}
+
+/* Totals row — always the last row in its section */
+.msr-fields-table tr.lc-total-row td,
+.msr-fields-table tr.ex-total-row td {
+    font-weight: 700;
 }
 
 /* Column header row inside tbody */

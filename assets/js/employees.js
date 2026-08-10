@@ -461,8 +461,6 @@ $(function () {
 
         // ----- Reports tab -----
         const rpt = buildReportData(invoices, msrMonthlyRequired);
-        // Pre-build income trend table rows
-        const incomeTblRows = buildIncomeTblRows(rpt);
 
         // ---- Build full detail HTML ----
         $detail.html(`
@@ -503,10 +501,10 @@ $(function () {
                         </div>
                         <div class="ov-kpi-card">
                             <span class="ov-kpi-label">Monthly Avg Income</span>
-                            <span class="ov-kpi-value" id="ov-monthly-avg">${escHtml(formatCurrency(rpt.monthlyAvg))}</span>
+                            <span class="ov-kpi-value" id="ov-monthly-avg">&#8230;</span>
                         </div>
                         <div class="ov-kpi-card">
-                            <span class="ov-kpi-label">Avg Deficit</span>
+                            <span class="ov-kpi-label" id="ov-avg-deficit-label">Avg Deficit</span>
                             <span class="ov-kpi-value" id="ov-avg-deficit">&#8230;</span>
                         </div>
                         <div class="ov-kpi-card">
@@ -519,28 +517,26 @@ $(function () {
                     <div class="reports-layout">
 
                         <section class="report-section">
-                            <h3 class="report-title">Income Trend \u2014 Last 12 Months</h3>
+                            <h3 class="report-title">Income \u2014 Chart of Accounts</h3>
+                            <div class="msr-monthly-card">
+                                <span class="msr-summary-label">Closing Balance</span>
+                                <span class="msr-summary-value" id="ov-income-balance">&#8230;</span>
+                            </div>
                             <div class="detail-table-wrap">
-                                <table class="data-table" id="ov-income-tbl">
+                                <table class="data-table" id="ov-income-monthly-tbl">
                                     <thead><tr>
                                         <th>Month</th>
                                         <th class="amount-cell">Income</th>
-                                        <th class="amount-cell">Cumulative</th>
                                     </tr></thead>
-                                    <tbody>${incomeTblRows}</tbody>
-                                    <tfoot><tr class="total-row">
-                                        <td>Total</td>
-                                        <td class="amount-cell" id="ov-income-total">${escHtml(formatCurrency(rpt.yearTotal))}</td>
-                                        <td class="amount-cell" id="ov-income-cumtotal">${escHtml(formatCurrency(rpt.yearTotal))}</td>
-                                    </tr></tfoot>
+                                    <tbody><tr><td colspan="2" class="detail-empty-msg">Loading\u2026</td></tr></tbody>
                                 </table>
                             </div>
                         </section>
 
                         <section class="report-section">
-                            <h3 class="report-title">Income by Month</h3>
+                            <h3 class="report-title">Income Trend \u2014 Chart of Accounts</h3>
                             <div class="report-chart-wrap">
-                                <canvas id="rpt-income"></canvas>
+                                <canvas id="rpt-income-coa"></canvas>
                             </div>
                         </section>
 
@@ -672,7 +668,9 @@ $(function () {
             // Remove any previously inserted add-row buttons before adding fresh ones.
             $layout.find('tr.msr-add-row-tr').remove();
 
-            // Add "Add Row" rows after each section's total row
+            // Add "Add Row" rows before each section's total row, so the
+            // total row always stays the last row in its section — newly
+            // added data rows land above it, never below.
             const addLcRow = `<tr class="msr-add-row-tr lc-add-tr">
                 <td colspan="${colCount + 1}">
                     <button type="button" class="btn-msr-add-row" data-section="lc">+ Add Living Cost Row</button>
@@ -681,8 +679,8 @@ $(function () {
                 <td colspan="${colCount + 1}">
                     <button type="button" class="btn-msr-add-row" data-section="ex">+ Add Extras Row</button>
                 </td></tr>`;
-            $layout.find('tr.lc-total-row').after(addLcRow);
-            $layout.find('tr.ex-total-row').after(addExRow);
+            $layout.find('tr.lc-total-row').before(addLcRow);
+            $layout.find('tr.ex-total-row').before(addExRow);
 
             // Widen the delete column on total rows too (just a blank)
             $layout.find('tr.lc-total-row, tr.ex-total-row').append('<td></td>');
@@ -835,11 +833,16 @@ $(function () {
         // Initialise charts with fast stub data — overview is visible immediately.
         initReportCharts(rpt);
 
-        // Populate Monthly Pledges and Avg Deficit KPIs in the Overview bar.
-        loadOvPledgesTotal(item, rpt.monthlyAvg, msrMonthlyRequired);
+        // Populate the Monthly Pledges KPI in the Overview bar.
+        loadOvPledgesTotal(item);
 
         // Populate the Support Account Balance KPI in the Overview bar.
         loadOvSupportBalance(item);
+
+        // Populate the Income — Chart of Accounts panel (balance + monthly
+        // totals), plus the Monthly Avg Income / Avg Deficit KPIs, which are
+        // now derived from the same Chart of Accounts data.
+        loadOvIncomeAccount(item, msrMonthlyRequired);
 
         // Populate the Overview attachments strip.
         loadOvAttachments(item.item_id);
@@ -857,20 +860,13 @@ $(function () {
                 });
                 renderTransactionsTab($txnPane, transactions);
 
-                // Re-draw Income by Month with item-specific figures.
-                if (!document.getElementById('rpt-income')) return;
+                // Re-draw Funding Status with item-specific figures.
+                if (!document.getElementById('rpt-funding')) return;
                 const rptAccurate = buildReportData(transactions, msrMonthlyRequired);
                 initReportCharts(rptAccurate);
-                $('#ov-income-tbl tbody').html(buildIncomeTblRows(rptAccurate));
-                $('#ov-income-total, #ov-income-cumtotal').text(formatCurrency(rptAccurate.yearTotal));
                 $('#ov-funding-income').text(formatCurrency(rptAccurate.yearTotal));
                 $('#ov-funding-pct').text(rptAccurate.percentFunded.toFixed(1) + '%');
                 $('#ov-outstanding-pct').text(rptAccurate.percentOutstanding.toFixed(1) + '%');
-                $('#ov-monthly-avg').text(formatCurrency(rptAccurate.monthlyAvg));
-                const deficit = (msrMonthlyRequired || 0) - rptAccurate.monthlyAvg;
-                $('#ov-avg-deficit').text(formatCurrency(deficit))
-                    .toggleClass('kpi-deficit', deficit > 0)
-                    .toggleClass('kpi-surplus', deficit <= 0);
             })
             .fail(function () { $txnPane.html('<p class="detail-empty-msg error-msg">Failed to load transactions. Try refreshing.</p>'); });
 
@@ -1000,7 +996,7 @@ $(function () {
 
         if (rows_data.length === 0) {
             $('#txn-tab-count').text('0');
-            $pane.html('<p class="detail-empty-msg">No paid invoices found for this employee.</p>');
+            $pane.html('<p class="detail-empty-msg">No invoices found for this employee.</p>');
             return;
         }
 
@@ -1157,49 +1153,66 @@ $(function () {
         });
     }
 
-    function loadOvPledgesTotal(item, monthlyAvg, msrMonthly) {
-        const $pledges = $('#ov-pledges-total');
-        const $deficit = $('#ov-avg-deficit');
-
-        // Avg Deficit = Monthly MSR − Monthly Avg Income (always computed immediately).
-        const deficit = (msrMonthly || 0) - monthlyAvg;
-        $deficit.text(formatCurrency(deficit))
-            .toggleClass('kpi-deficit', deficit > 0)
-            .toggleClass('kpi-surplus', deficit <= 0);
-
+    /**
+     * Fetch every ACTIVE recurring invoice matched to this item, each enriched
+     * with `invoiceAmount` = the specific line-item total for this item within
+     * that recurring invoice (not the whole invoice total).
+     *
+     * A donor can split their pledge across multiple concurrent recurring
+     * invoices for the same employee, and a single recurring invoice can fund
+     * several employees via separate line items — using the invoice's full
+     * total and keeping only the single largest one per customer (the old
+     * approach) undercounts split pledges and can misattribute multi-item
+     * invoices. Summing every active invoice's own line-item amount handles
+     * both correctly. Stopped/expired/draft invoices are excluded — only
+     * Active ones represent a current pledge.
+     *
+     * @param {function(Array|null)} callback - receives the enriched list, or
+     *   null if the initial recurring-invoice fetch failed.
+     */
+    function fetchItemPledges(item, callback) {
         apiGet(PROXY + '?endpoint=books_recurring_all')
             .done(function (res) {
-                const matched = (res.data || []).filter(ri => supportMatch(item.name, ri.recurrence_name));
+                const matched = (res.data || []).filter(function (ri) {
+                    return ri.status === 'active' && supportMatch(item.name, ri.recurrence_name);
+                });
                 if (matched.length === 0) {
-                    $pledges.text(formatCurrency(0));
+                    callback([]);
                     return;
                 }
 
-                const enriched = matched.map(r => Object.assign({}, r, { invoiceAmount: 0 }));
+                const enriched = [];
                 let remaining  = matched.length;
 
-                matched.forEach(function (r, i) {
-                    apiGet(PROXY + '?endpoint=books_recurring_detail&recurring_invoice_id=' + encodeURIComponent(r.recurring_invoice_id))
+                matched.forEach(function (ri) {
+                    apiGet(PROXY + '?endpoint=books_recurring_detail&recurring_invoice_id=' + encodeURIComponent(ri.recurring_invoice_id))
                         .done(function (res2) {
                             const d = res2.data || {};
-                            enriched[i].invoiceAmount = parseFloat(d.amount || d.sub_total || 0);
+                            const ownLines = (d.line_items || []).filter(li => String(li.item_id) === String(item.item_id));
+                            const amount = ownLines.length
+                                ? ownLines.reduce((s, li) => s + (parseFloat(li.item_total) || 0), 0)
+                                : parseFloat(d.sub_total || d.amount || 0);
+                            enriched.push(Object.assign({}, ri, { invoiceAmount: amount }));
                         })
                         .always(function () {
-                            if (--remaining === 0) {
-                                const bestMap = {};
-                                enriched.forEach(r => {
-                                    const key = r.customer_name || '—';
-                                    if (!bestMap[key] || calcMonthlyPledge(r) > calcMonthlyPledge(bestMap[key])) {
-                                        bestMap[key] = r;
-                                    }
-                                });
-                                const pledgesTotal = Object.values(bestMap).reduce((s, r) => s + calcMonthlyPledge(r), 0);
-                                $pledges.text(formatCurrency(pledgesTotal));
-                            }
+                            if (--remaining === 0) callback(enriched);
                         });
                 });
             })
-            .fail(function () { $pledges.text('—'); });
+            .fail(function () { callback(null); });
+    }
+
+    function loadOvPledgesTotal(item) {
+        const $pledges = $('#ov-pledges-total');
+
+        fetchItemPledges(item, function (pledges) {
+            if (pledges === null) {
+                $pledges.text('—');
+                return;
+            }
+            const pledgesTotal = pledges.reduce((s, r) => s + calcMonthlyPledge(r), 0);
+            $pledges.text(formatCurrency(pledgesTotal));
+        });
     }
 
     function loadOvSupportBalance(item) {
@@ -1220,60 +1233,175 @@ $(function () {
             .fail(function () { $balance.text('—'); });
     }
 
-    function renderSupportTab($pane, item, msrMonthly) {
-        $pane.html('<div class="detail-loading"><span class="spinner"></span></div>');
+    function loadOvIncomeAccount(item, msrMonthlyRequired) {
+        const $balance      = $('#ov-income-balance');
+        const $tbody        = $('#ov-income-monthly-tbl tbody');
+        const $avg          = $('#ov-monthly-avg');
+        const $deficit      = $('#ov-avg-deficit');
+        const $deficitLabel = $('#ov-avg-deficit-label');
+        if (!$balance.length) return;
 
-        apiGet(PROXY + '?endpoint=books_recurring_all')
+        function clearKpis() {
+            $avg.text('—');
+            $deficit.text('—');
+            $deficitLabel.text('Avg Deficit');
+        }
+
+        function clearChart() {
+            if (_charts['rpt-income-coa']) {
+                _charts['rpt-income-coa'].destroy();
+                delete _charts['rpt-income-coa'];
+            }
+        }
+
+        apiGet(PROXY + '?endpoint=books_income_account&item_id=' + encodeURIComponent(item.item_id))
             .done(function (res) {
-                const all = res.data || [];
+                const d = res.data || {};
+                if (!d.found || d.balance === null) {
+                    $balance.text('—');
+                    $tbody.html('<tr><td colspan="2" class="detail-empty-msg">No income account found.</td></tr>');
+                    clearKpis();
+                    clearChart();
+                    return;
+                }
+                $balance.text(formatCurrencyExact(d.balance))
+                    .toggleClass('kpi-deficit', d.balance < 0)
+                    .toggleClass('kpi-surplus', d.balance >= 0);
 
-                const matched = all.filter(function (ri) {
-                    return supportMatch(item.name, ri.recurrence_name);
-                });
-
-                if (matched.length === 0) {
-                    $pane.html('<p class="detail-empty-msg">No recurring pledges found for this employee.</p>');
+                const txns = d.transactions || [];
+                if (!txns.length) {
+                    $tbody.html('<tr><td colspan="2" class="detail-empty-msg">No recent transactions.</td></tr>');
+                    clearKpis();
+                    clearChart();
                     return;
                 }
 
-                // The list endpoint returns total:0 — fetch each detail in parallel
-                // to get the real Invoice Amount field.
-                $pane.html('<div class="detail-loading"><span class="spinner"></span></div>');
+                const monthly = groupIncomeByMonth(txns);
+                $tbody.html(buildIncomeMonthlyRows(monthly));
+                drawIncomeCoaChart(monthly);
 
-                const enriched = matched.map(r => Object.assign({}, r, { invoiceAmount: 0 }));
-                let remaining  = matched.length;
+                // Monthly Avg Income / Avg Deficit — derived from the same
+                // Chart of Accounts monthly figures (credits only), averaged
+                // over however many distinct months are in the up-to-5
+                // recent transactions Zoho returns (see groupIncomeByMonth).
+                const avgIncome = monthly.reduce((s, m) => s + m.income, 0) / monthly.length;
+                $avg.text(formatCurrency(avgIncome));
 
-                function renderSupportTable() {
-                    // For each customer name keep only the row with the highest monthly pledge.
-                    const bestMap = {};
-                    enriched.forEach(r => {
-                        const key = r.customer_name || '\u2014';
-                        if (!bestMap[key] || calcMonthlyPledge(r) > calcMonthlyPledge(bestMap[key])) {
-                            bestMap[key] = r;
-                        }
-                    });
-                    const deduped = Object.values(bestMap)
-                        .sort((a, b) => (a.customer_name || '').localeCompare(b.customer_name || ''));
+                const deficit = (msrMonthlyRequired || 0) - avgIncome;
+                const isSurplus = deficit <= 0;
+                $deficitLabel.text(isSurplus ? 'Average Surplus' : 'Avg Deficit');
+                $deficit.text(formatCurrency(isSurplus ? -deficit : deficit))
+                    .toggleClass('kpi-deficit', !isSurplus)
+                    .toggleClass('kpi-surplus', isSurplus);
+            })
+            .fail(function () {
+                $balance.text('—');
+                $tbody.html('<tr><td colspan="2" class="detail-empty-msg error-msg">Failed to load.</td></tr>');
+                clearKpis();
+                clearChart();
+            });
+    }
 
-                    const monthlyTotal = deduped.reduce((s, r) => s + calcMonthlyPledge(r), 0);
-                    const totalPct     = msrMonthly > 0 ? (monthlyTotal / msrMonthly) * 100 : 0;
-                    const shortfall    = (msrMonthly || 0) - monthlyTotal;
+    function drawIncomeCoaChart(monthly) {
+        const chronological = monthly.slice().reverse(); // oldest → newest
+        _createChart('rpt-income-coa', {
+            type: 'line',
+            data: {
+                labels: chronological.map(m => m.label),
+                datasets: [{
+                    label: 'Income',
+                    data: chronological.map(m => m.income),
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'rgba(59,130,246,0.10)',
+                    fill: true,
+                    tension: 0.35,
+                    pointRadius: 4,
+                    pointHoverRadius: 6,
+                }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: {
+                        ticks: { callback: v => formatCurrency(v), font: { size: 11 } },
+                        grid:  { color: 'rgba(0,0,0,0.05)' },
+                    },
+                    x: { grid: { display: false } },
+                },
+            },
+        });
+    }
 
-                    const rows = deduped.map(r => {
-                        const mp  = calcMonthlyPledge(r);
-                        const yp  = mp * 12;
-                        const pct = msrMonthly > 0 ? (mp / msrMonthly) * 100 : 0;
-                        return `<tr>
-                        <td>${escHtml(r.customer_name || '\u2014')}</td>
-                        <td class="amount-cell">${formatCurrency(r.invoiceAmount)}</td>
-                        <td>${escHtml(formatFrequency(r))}</td>
-                        <td class="amount-cell">${formatCurrency(mp)}</td>
-                        <td class="amount-cell">${formatCurrency(yp)}</td>
-                        <td class="amount-cell">${pct.toFixed(1)}%</td>
-                    </tr>`;
-                    }).join('');
+    // Group the account's recent transactions (newest first, already
+    // date-sorted by Zoho) into one Credit total per month. Debit entries
+    // (e.g. month-end "move balance to equity" sweep journals) aren't
+    // income and are excluded.
+    function groupIncomeByMonth(txns) {
+        const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const totals = []; // [{ key, label, income }], newest month first
+        const byKey  = {};
 
-                    $pane.html(`
+        txns.forEach(function (t) {
+            const key = (t.date || '').slice(0, 7); // YYYY-MM
+            const credit = parseFloat(t.credit) || 0;
+            if (!byKey[key]) {
+                const d = new Date(t.date + 'T00:00:00');
+                byKey[key] = { key, label: MONTH_ABBR[d.getMonth()] + ' ' + d.getFullYear(), income: 0 };
+                totals.push(byKey[key]);
+            }
+            byKey[key].income += credit;
+        });
+
+        return totals;
+    }
+
+    function buildIncomeMonthlyRows(monthly) {
+        return monthly.map(function (m) {
+            return `<tr>
+                <td>${escHtml(m.label)}</td>
+                <td class="amount-cell">${escHtml(formatCurrency(m.income))}</td>
+            </tr>`;
+        }).join('');
+    }
+
+    function renderSupportTab($pane, item, msrMonthly) {
+        $pane.html('<div class="detail-loading"><span class="spinner"></span></div>');
+
+        fetchItemPledges(item, function (pledges) {
+            if (pledges === null) {
+                $pane.html('<p class="detail-empty-msg error-msg">Failed to load support data. Try refreshing.</p>');
+                return;
+            }
+            if (pledges.length === 0) {
+                $pane.html('<p class="detail-empty-msg">No recurring pledges found for this employee.</p>');
+                return;
+            }
+
+            // One row per active recurring invoice — a donor who splits their
+            // pledge across multiple invoices gets multiple rows, all counted.
+            const sorted = pledges.slice()
+                .sort((a, b) => (a.customer_name || '').localeCompare(b.customer_name || ''));
+
+            const monthlyTotal = sorted.reduce((s, r) => s + calcMonthlyPledge(r), 0);
+            const totalPct     = msrMonthly > 0 ? (monthlyTotal / msrMonthly) * 100 : 0;
+            const shortfall    = (msrMonthly || 0) - monthlyTotal;
+            const rows = sorted.map(r => {
+                const mp  = calcMonthlyPledge(r);
+                const yp  = mp * 12;
+                const pct = msrMonthly > 0 ? (mp / msrMonthly) * 100 : 0;
+                return `<tr>
+                    <td>${escHtml(r.customer_name || '\u2014')}</td>
+                    <td class="amount-cell">${formatCurrency(r.invoiceAmount)}</td>
+                    <td>${escHtml(formatFrequency(r))}</td>
+                    <td class="amount-cell">${formatCurrency(mp)}</td>
+                    <td class="amount-cell">${formatCurrency(yp)}</td>
+                    <td class="amount-cell">${pct.toFixed(1)}%</td>
+                </tr>`;
+            }).join('');
+
+            $pane.html(`
                         <div class="detail-table-wrap support-table-wrap">
                             <table class="data-table support-table">
                                 <thead><tr>
@@ -1310,23 +1438,8 @@ $(function () {
                                 <span class="support-kpi-sub">remaining to be raised</span>
                             </div>
                         </div>
-                    `);
-                }
-
-                matched.forEach(function (r, i) {
-                    apiGet(PROXY + '?endpoint=books_recurring_detail&recurring_invoice_id=' + encodeURIComponent(r.recurring_invoice_id))
-                        .done(function (res) {
-                            const detail = res.data || {};
-                            enriched[i].invoiceAmount = parseFloat(detail.amount || detail.sub_total || 0);
-                        })
-                        .always(function () {
-                            if (--remaining === 0) renderSupportTable();
-                        });
-                });
-            })
-            .fail(function () {
-                $pane.html('<p class="detail-empty-msg error-msg">Failed to load support data. Try refreshing.</p>');
-            });
+            `);
+        });
     }
 
     // -------------------------------------------------------------------------
@@ -1791,22 +1904,10 @@ $(function () {
     // -------------------------------------------------------------------------
 
     /**
-     * Compute all report metrics from the employee's paid invoices array.
+     * Compute all report metrics from the employee's income-recognised invoices
+     * array (every status except Draft/Void — see books_getInvoicesByItem()).
      * Each invoice: { invoice_id, invoice_number, date, customer_name, total }
      */
-    function buildIncomeTblRows(rpt) {
-        let cumSum = 0;
-        return rpt.monthLabels.map(function (lbl, i) {
-            const inc = rpt.monthlyIncome[i];
-            cumSum += inc;
-            const incStr = inc    > 0 ? formatCurrency(inc)    : '—';
-            const cumStr = cumSum > 0 ? formatCurrency(cumSum) : '—';
-            return '<tr><td>' + lbl + '</td>'
-                + '<td class="amount-cell">' + escHtml(incStr) + '</td>'
-                + '<td class="amount-cell">' + escHtml(cumStr) + '</td></tr>';
-        }).join('');
-    }
-
     function buildReportData(invoices, msrMonthly) {
         const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
         const now = new Date();
@@ -1844,15 +1945,11 @@ $(function () {
             : 0;
         const percentOutstanding = Math.max(0, 100 - percentFunded);
 
-        const monthsWithData = monthlyIncome.filter(v => v > 0).length;
-        const monthlyAvg     = monthsWithData > 0 ? yearTotal / monthsWithData : 0;
-
         return {
             monthLabels,
             monthlyIncome,
             cumulativeIncome,
             yearTotal,
-            monthlyAvg,
             totalYearlySupport,
             percentFunded,
             percentOutstanding,
@@ -1864,37 +1961,6 @@ $(function () {
     // -------------------------------------------------------------------------
 
     function initReportCharts(rpt) {
-        const auCurrency = v => formatCurrency(v);
-
-        const lineOpts = (datasets) => ({
-            type: 'line',
-            data: { labels: rpt.monthLabels, datasets },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: {
-                    y: {
-                        ticks: { callback: auCurrency, font: { size: 11 } },
-                        grid:  { color: 'rgba(0,0,0,0.05)' },
-                    },
-                    x: { grid: { display: false } },
-                },
-            },
-        });
-
-        // Income by Month (blue)
-        _createChart('rpt-income', lineOpts([{
-            label: 'Income',
-            data: rpt.monthlyIncome,
-            borderColor: '#3b82f6',
-            backgroundColor: 'rgba(59,130,246,0.10)',
-            fill: true,
-            tension: 0.35,
-            pointRadius: 4,
-            pointHoverRadius: 6,
-        }]));
-
         // Funding Status Pie
         _createChart('rpt-funding', {
             type: 'pie',

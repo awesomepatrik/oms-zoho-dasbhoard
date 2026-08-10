@@ -333,8 +333,14 @@ function books_getAllItemCustomFields(string $token): array
 }
 
 /**
- * Return paid invoices for an employee's contact (customer_id).
+ * Return income-recognised invoices for an employee's contact (customer_id).
  * Resolves item → contact, then filters GET /invoices by customer_id.
+ *
+ * Matches what actually posts to the item's "{item name} - Income" account
+ * in Zoho Books' Chart of Accounts: a Draft invoice hasn't been issued yet
+ * so it never posts, and a Void invoice has been reversed — everything else
+ * (Sent/Viewed/OverDue/Unpaid/Partially Paid/Paid) posts as income at
+ * issuance, regardless of whether it's actually been paid.
  */
 function books_getInvoicesByItem(string $token, string $itemId): array
 {
@@ -342,15 +348,18 @@ function books_getInvoicesByItem(string $token, string $itemId): array
     $customerId = $contact['contact_id'] ?? '';
     if ($customerId === '') return [];
 
-    return books_paginate($token, '/invoices', 'invoices', [
+    $invoices = books_paginate($token, '/invoices', 'invoices', [
         'customer_id' => $customerId,
-        'filter_by'   => 'Status.Paid',
+        'filter_by'   => 'Status.All',
     ]);
+
+    return array_values(array_filter($invoices, fn($inv) => !in_array(strtolower($inv['status'] ?? ''), ['draft', 'void'], true)));
 }
 
 /**
- * Return invoices for a specific item using GET /invoices?item_id=...
- * Follows the endpoint: /invoices?organization_id={org_id}&item_id={item_id}
+ * Return income-recognised invoices for a specific item using
+ * GET /invoices?item_id=... — see books_getInvoicesByItem() for why Draft
+ * and Void are excluded but every other status counts.
  */
 function books_getInvoiceTransactions(string $token, string $itemId): array
 {
@@ -364,7 +373,7 @@ function books_getInvoiceTransactions(string $token, string $itemId): array
         'per_page'   => 200,
     ]);
 
-    return array_values(array_filter($invoices, fn($inv) => strtolower($inv['status'] ?? '') === 'paid'));
+    return array_values(array_filter($invoices, fn($inv) => !in_array(strtolower($inv['status'] ?? ''), ['draft', 'void'], true)));
 }
 
 function books_getInvoiceDetail(string $token, string $invoiceId): array
@@ -476,7 +485,25 @@ function books_getAccountBalanceByName(string $token, string $targetName): array
         'account_name' => $account['account_name'] ?? $targetName,
         'balance'      => $balance !== null ? (float)$balance : null,
         'found'        => true,
+        // Zoho only ever returns the 5 most recent entries here — there is
+        // no date range or pagination that returns more (verified against
+        // the live API). Fine for a "recent activity" list, not a trend.
+        'transactions' => $account['transactions'] ?? [],
     ];
+}
+
+/**
+ * Return the item's "{item name} - Income" Chart of Accounts entry
+ * (closing balance + up to 5 recent transactions) for the Overview tab.
+ */
+function books_getItemIncomeAccount(string $token, string $itemId): array
+{
+    $item     = books_getItemDetail($token, $itemId);
+    $itemName = trim($item['name'] ?? '');
+    if ($itemName === '') {
+        return ['balance' => null, 'found' => false, 'transactions' => []];
+    }
+    return books_getAccountBalanceByName($token, $itemName . ' - Income');
 }
 
 /**
