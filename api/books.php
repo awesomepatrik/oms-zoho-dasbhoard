@@ -493,8 +493,25 @@ function books_getAccountBalanceByName(string $token, string $targetName): array
 }
 
 /**
- * Return the item's "{item name} - Income" Chart of Accounts entry
- * (closing balance + up to 5 recent transactions) for the Overview tab.
+ * Fetch every transaction posted to a Chart of Accounts entry within a date
+ * range, paginated. Unlike the account detail endpoint's embedded
+ * "transactions" list (which only ever returns the 5 most recent entries
+ * regardless of date range or pagination — verified against the live API),
+ * GET /chartofaccounts/transactions returns the full ledger for the range.
+ */
+function books_getAccountTransactions(string $token, string $accountId, string $dateStart, string $dateEnd): array
+{
+    return books_paginate($token, '/chartofaccounts/transactions', 'transactions', [
+        'account_id' => $accountId,
+        'date_start' => $dateStart,
+        'date_end'   => $dateEnd,
+    ]);
+}
+
+/**
+ * Return the item's "{item name} - Income" Chart of Accounts entry: closing
+ * balance plus every transaction posted so far this calendar year, for the
+ * Overview tab's Income Trend.
  */
 function books_getItemIncomeAccount(string $token, string $itemId): array
 {
@@ -503,7 +520,31 @@ function books_getItemIncomeAccount(string $token, string $itemId): array
     if ($itemName === '') {
         return ['balance' => null, 'found' => false, 'transactions' => []];
     }
-    return books_getAccountBalanceByName($token, $itemName . ' - Income');
+
+    $account = books_getAccountBalanceByName($token, $itemName . ' - Income');
+    if (!$account['found'] || empty($account['account_id'])) {
+        return $account;
+    }
+
+    $year = date('Y');
+    $raw  = books_getAccountTransactions($token, $account['account_id'], "{$year}-01-01", "{$year}-12-31");
+
+    // Exclude "Sales without Invoices" entries — not real pledge/donor income.
+    $raw = array_values(array_filter($raw, fn(array $t): bool => ($t['transaction_type'] ?? '') !== 'sales_without_invoices'));
+
+    // Normalise to the same shape the 5-row preview used, so downstream
+    // consumers (grouping by month, etc.) don't need to change.
+    $account['transactions'] = array_map(function (array $t): array {
+        return [
+            'date'                  => $t['transaction_date'] ?? '',
+            'customer_name'         => $t['payee'] ?? '',
+            'entity_type_formatted' => $t['transaction_type_formatted'] ?? '',
+            'debit'                 => $t['debit_amount']  ?? '',
+            'credit'                => $t['credit_amount'] ?? '',
+        ];
+    }, $raw);
+
+    return $account;
 }
 
 /**

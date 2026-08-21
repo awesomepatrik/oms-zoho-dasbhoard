@@ -166,7 +166,7 @@ $(function () {
     // Detail panel loading
     // -------------------------------------------------------------------------
 
-    function loadDetail(itemId, forceRefresh) {
+    function loadDetail(itemId, forceRefresh, activeTab) {
         // Evict this item's cached responses so the next fetch goes back to the
         // server (e.g. after an MSR save that invalidated the server-side cache).
         if (forceRefresh) {
@@ -222,6 +222,13 @@ $(function () {
                 const cfDefs  = Array.isArray(cfDefsRes && cfDefsRes.data) ? cfDefsRes.data : [];
                 const contact = (contactRes && contactRes.data) || {};
                 renderDetail($detail, item, invoices, cfDefs, contact, transactionsReq);
+
+                // Re-render defaults to the Overview tab — if a specific tab
+                // was requested (e.g. re-loading after an MSR save), switch
+                // straight back to it instead of losing the user's place.
+                if (activeTab && activeTab !== 'overview') {
+                    $detail.find('.tab-btn[data-tab="' + activeTab + '"]').trigger('click');
+                }
             });
 
         }).fail(function (jqXHR) {
@@ -454,8 +461,8 @@ $(function () {
         const exDataRows = extrasRows.map(cells =>
             `<tr class="ex-data-row">
                 <td>${escHtml(cells[0] || '')}</td>
-                <td class="amount-cell">${escHtml(cells[exAmtIdx] || '')}</td>
                 ${Array(lcColCount - 2).fill('<td></td>').join('')}
+                <td class="amount-cell">${escHtml(cells[exAmtIdx] || '')}</td>
             </tr>`).join('');
 
 
@@ -525,7 +532,7 @@ $(function () {
                             <div class="detail-table-wrap">
                                 <table class="data-table" id="ov-income-monthly-tbl">
                                     <thead><tr>
-                                        <th>Month</th>
+                                        <th>Month (This Year)</th>
                                         <th class="amount-cell">Income</th>
                                     </tr></thead>
                                     <tbody><tr><td colspan="2" class="detail-empty-msg">Loading\u2026</td></tr></tbody>
@@ -534,7 +541,7 @@ $(function () {
                         </section>
 
                         <section class="report-section">
-                            <h3 class="report-title">Income Trend \u2014 Chart of Accounts</h3>
+                            <h3 class="report-title">Income Trend \u2014 Chart of Accounts (This Year)</h3>
                             <div class="report-chart-wrap">
                                 <canvas id="rpt-income-coa"></canvas>
                             </div>
@@ -600,14 +607,14 @@ $(function () {
                                     </tr>
                                     <tr class="msr-col-header">
                                         <th>Item</th>
-                                        <th class="amount-cell">Amount</th>
                                         ${Array(lcColCount - 2).fill('<th></th>').join('')}
+                                        <th class="amount-cell">Amount</th>
                                     </tr>
                                     ${extrasRows.length > 0 ? exDataRows : `<tr class="msr-placeholder-row"><td colspan="${lcColCount}" class="detail-empty-msg">No extras.</td></tr>`}
                                     <tr class="ex-total-row total-row">
                                         <td>Total</td>
-                                        <td class="amount-cell ex-term-total">${escHtml(formatCurrency(exTermTotal))}</td>
                                         ${Array(lcColCount - 2).fill('<td></td>').join('')}
+                                        <td class="amount-cell ex-term-total">${escHtml(formatCurrency(exTermTotal))}</td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -654,10 +661,12 @@ $(function () {
                 $tds.eq(4).addClass('msr-cell-computed');
             });
 
-            // Make Extras data cells editable (only item + amount — first 2 cols)
+            // Make Extras data cells editable — Item (first column) and
+            // Amount (last column); everything between is a blank filler.
             $layout.find('tr.ex-data-row').each(function () {
-                $(this).find('td').eq(0).attr('contenteditable', 'true').addClass('msr-cell-edit');
-                $(this).find('td').eq(1).attr('contenteditable', 'true').addClass('msr-cell-edit');
+                const $tds = $(this).find('td');
+                $tds.eq(0).attr('contenteditable', 'true').addClass('msr-cell-edit');
+                $tds.eq(colCount - 1).attr('contenteditable', 'true').addClass('msr-cell-edit');
             });
 
             // Add delete button cell to each data row
@@ -687,7 +696,7 @@ $(function () {
         }
 
         function msrCancelEdit() {
-            loadDetail(selectedId);
+            loadDetail(selectedId, false, 'msr');
         }
 
         function msrSerialize() {
@@ -718,8 +727,9 @@ $(function () {
 
             const exRows = [];
             $layout.find('tr.ex-data-row').each(function () {
-                const desc = $(this).find('td:not(.msr-del-cell)').eq(0).text().trim();
-                const amt  = $(this).find('td:not(.msr-del-cell)').eq(1).text().trim();
+                const $cells = $(this).find('td:not(.msr-del-cell)');
+                const desc = $cells.first().text().trim();
+                const amt  = $cells.last().text().trim();
                 if (desc || amt) exRows.push([desc, amt]);
             });
 
@@ -760,7 +770,7 @@ $(function () {
             }).done(function (res) {
                 if (res.success) {
                     $status.text('Saved.').addClass('msr-status-ok');
-                    loadDetail(selectedId);
+                    loadDetail(selectedId, true, 'msr');
                 } else {
                     $status.text('Error: ' + (res.message || 'unknown')).addClass('msr-status-err');
                     $layout.find('#btn-msr-save').prop('disabled', false).text('Save');
@@ -791,7 +801,7 @@ $(function () {
         $detail.on('click.msr', '#btn-msr-save',    msrSave);
         $detail.on('click.msr', '#btn-msr-cancel',  msrCancelEdit);
         $detail.on('click.msr', '#btn-msr-refresh', function () {
-            loadDetail(selectedId, true);
+            loadDetail(selectedId, true, 'msr');
         });
 
         $detail.on('click.msr', '.btn-msr-del-row', function () {
@@ -819,8 +829,8 @@ $(function () {
             } else {
                 const $row = $(`<tr class="ex-data-row">
                     <td contenteditable="true" class="msr-cell-edit"></td>
-                    <td class="amount-cell msr-cell-edit" contenteditable="true"></td>
                     ${Array(colCount - 2).fill('<td></td>').join('')}
+                    <td class="amount-cell msr-cell-edit" contenteditable="true"></td>
                     <td class="msr-del-cell"><button type="button" class="btn-msr-del-row" title="Delete row">&times;</button></td>
                 </tr>`);
                 $(this).closest('tr').before($row);
@@ -1270,7 +1280,7 @@ $(function () {
 
                 const txns = d.transactions || [];
                 if (!txns.length) {
-                    $tbody.html('<tr><td colspan="2" class="detail-empty-msg">No recent transactions.</td></tr>');
+                    $tbody.html('<tr><td colspan="2" class="detail-empty-msg">No transactions posted this year.</td></tr>');
                     clearKpis();
                     clearChart();
                     return;
@@ -1282,8 +1292,7 @@ $(function () {
 
                 // Monthly Avg Income / Avg Deficit — derived from the same
                 // Chart of Accounts monthly figures (credits only), averaged
-                // over however many distinct months are in the up-to-5
-                // recent transactions Zoho returns (see groupIncomeByMonth).
+                // over every distinct month posted so far this calendar year.
                 const avgIncome = monthly.reduce((s, m) => s + m.income, 0) / monthly.length;
                 $avg.text(formatCurrency(avgIncome));
 
@@ -1334,7 +1343,7 @@ $(function () {
         });
     }
 
-    // Group the account's recent transactions (newest first, already
+    // Group the account's current-year transactions (newest first, already
     // date-sorted by Zoho) into one Credit total per month. Debit entries
     // (e.g. month-end "move balance to equity" sweep journals) aren't
     // income and are excluded.

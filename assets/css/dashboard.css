@@ -1153,6 +1153,7 @@ body.app-body {
 .btn-msr-cancel  { background: transparent; }
 .btn-msr-refresh { margin-left: auto; background: transparent; color: var(--colour-muted, #888); font-size: 0.8rem; }
 .btn-msr-action:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-msr-action.is-hidden { display: none; }
 
 .msr-save-status { font-size: 0.8rem; }
 .msr-status-ok  { color: var(--colour-success); }
