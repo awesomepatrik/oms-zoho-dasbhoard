@@ -497,6 +497,9 @@ $(function () {
                 </div>
 
                 <div class="tab-pane" id="tab-overview">
+                    <div class="ov-toolbar">
+                        <button id="btn-overview-refresh" class="btn-msr-action btn-msr-refresh" title="Reload from Zoho Books">&#8635; Refresh</button>
+                    </div>
                     <div class="ov-kpi-bar">
                         <div class="ov-kpi-card">
                             <span class="ov-kpi-label">Monthly MSR</span>
@@ -784,7 +787,11 @@ $(function () {
         }
 
         // Unbind any stale handlers from a previous renderDetail call before rebinding.
-        $detail.off('input.msr click.msr');
+        $detail.off('input.msr click.msr click.ov');
+
+        $detail.on('click.ov', '#btn-overview-refresh', function () {
+            loadDetail(selectedId, true, 'overview');
+        });
 
         // Live computation: Yearly = Monthly × 12, Term = Yearly × Multiplier
         $detail.on('input.msr', 'tr.lc-data-row td[contenteditable]', function () {

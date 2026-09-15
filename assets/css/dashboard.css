@@ -660,11 +660,18 @@ body.app-body {
     word-break: break-word;
 }
 
+/* ── Overview toolbar ──────────────────────────────────────────────────── */
+.ov-toolbar {
+    display: flex;
+    align-items: center;
+    padding-top: 16px;
+}
+
 /* ── Overview KPI bar ──────────────────────────────────────────────────── */
 .ov-kpi-bar {
     display: flex;
     gap: 16px;
-    padding: 16px 0 8px;
+    padding: 8px 0 8px;
 }
 .ov-kpi-card {
     flex: 1;
