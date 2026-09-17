@@ -168,6 +168,79 @@ function books_getContactDetail(string $token, string $contactId): array
 }
 
 /**
+ * Look up a single Zoho Books contact by exact email address via
+ * GET /contacts?email=... (server-side filter).
+ */
+function books_getContactByEmail(string $token, string $email): array
+{
+    $cfg     = get_config();
+    $baseUrl = rtrim($cfg['books_api_base'], '/');
+    $orgQs   = http_build_query(['organization_id' => $cfg['books_org_id']]);
+
+    $url  = "{$baseUrl}/contacts?{$orgQs}&" . http_build_query(['email' => $email]);
+    $resp = books_get($token, $url);
+
+    return $resp['contacts'][0] ?? [];
+}
+
+/**
+ * Look up a single Zoho Books contact by exact name via
+ * GET /contacts?contact_name=... (server-side filter, verified exact match
+ * against the returned rows since Zoho's filter behaviour isn't documented).
+ */
+function books_getContactByName(string $token, string $name): array
+{
+    $cfg     = get_config();
+    $baseUrl = rtrim($cfg['books_api_base'], '/');
+    $orgQs   = http_build_query(['organization_id' => $cfg['books_org_id']]);
+
+    $url  = "{$baseUrl}/contacts?{$orgQs}&" . http_build_query(['contact_name' => $name]);
+    $resp = books_get($token, $url);
+
+    foreach ($resp['contacts'] ?? [] as $c) {
+        if (strcasecmp(trim($c['contact_name'] ?? ''), $name) === 0) {
+            return $c;
+        }
+    }
+    return [];
+}
+
+/**
+ * Resolve the customer contact for an item: first via its "Customer Email"
+ * custom field, falling back to a Zoho Books contact whose name exactly
+ * matches the item's name (many items are named identically to their
+ * corresponding customer record). Returns the FULL contact detail (custom
+ * fields, contact persons, etc.) — the same shape as books_getContactDetail()
+ * — so the Overview tab's Information section can render it exactly like any
+ * other contact. Returns [] if no match is found either way.
+ */
+function books_getItemCustomerContact(string $token, string $itemId): array
+{
+    $item     = books_getItemDetail($token, $itemId);
+    $itemName = trim($item['name'] ?? '');
+
+    $email = '';
+    foreach ($item['custom_fields'] ?? [] as $cf) {
+        if (stripos($cf['label'] ?? '', 'customer email') !== false) {
+            $email = trim((string)($cf['value'] ?? ''));
+            break;
+        }
+    }
+
+    $contact = $email !== '' ? books_getContactByEmail($token, $email) : [];
+    if (empty($contact) && $itemName !== '') {
+        $contact = books_getContactByName($token, $itemName);
+    }
+
+    $contactId = $contact['contact_id'] ?? '';
+    if ($contactId === '') {
+        return [];
+    }
+
+    return books_getContactDetail($token, $contactId);
+}
+
+/**
  * Find the employee family contact for an item by searching Zoho Books
  * contacts whose name matches the item's "Receipient Group Name" custom field
  * (falls back to the item name). Returns the full contact detail.

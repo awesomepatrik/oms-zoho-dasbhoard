@@ -66,6 +66,7 @@ const ENDPOINTS = [
     'books_recurring_detail'     => ['fn' => 'books_getRecurringDetail',     'param' => 'recurring_invoice_id'],
     'books_support_balance'      => ['fn' => 'books_getSupportAccountBalance','param' => 'item_id'],
     'books_income_account'       => ['fn' => 'books_getItemIncomeAccount',    'param' => 'item_id'],
+    'books_item_customer'        => ['fn' => 'books_getItemCustomerContact', 'param' => 'item_id'],
     'crm_contacts'               => ['fn' => 'crm_getContacts'],
     'crm_employees'              => ['fn' => 'crm_getEmployees'],
     'crm_accounts'               => ['fn' => 'crm_getAccounts'],

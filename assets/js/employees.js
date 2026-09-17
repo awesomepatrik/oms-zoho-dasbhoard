@@ -217,11 +217,18 @@ $(function () {
                 ? apiGet(PROXY + '?endpoint=books_contact_detail&contact_id=' + encodeURIComponent(pmId))
                     .then(function (r) { return r; }, function () { return { data: {} }; })
                 : $.when({ data: {} });
+            // Customer contact — resolved via "Customer Email" custom field,
+            // falling back to a contact whose name exactly matches the item's
+            // name. Separate from the Project Manager contact above (which
+            // the Flow tab still relies on for its file-upload target).
+            const customerReq = apiGet(PROXY + '?endpoint=books_item_customer&item_id=' + encodeURIComponent(itemId))
+                .then(function (r) { return r; }, function () { return { data: {} }; });
 
-            $.when(cfDefsReq, contactReq).done(function (cfDefsRes, contactRes) {
-                const cfDefs  = Array.isArray(cfDefsRes && cfDefsRes.data) ? cfDefsRes.data : [];
-                const contact = (contactRes && contactRes.data) || {};
-                renderDetail($detail, item, invoices, cfDefs, contact, transactionsReq);
+            $.when(cfDefsReq, contactReq, customerReq).done(function (cfDefsRes, contactRes, customerRes) {
+                const cfDefs        = Array.isArray(cfDefsRes && cfDefsRes.data) ? cfDefsRes.data : [];
+                const contact       = (contactRes && contactRes.data) || {};
+                const customerContact = (customerRes && customerRes.data) || {};
+                renderDetail($detail, item, invoices, cfDefs, contact, transactionsReq, customerContact);
 
                 // Re-render defaults to the Overview tab — if a specific tab
                 // was requested (e.g. re-loading after an MSR save), switch
@@ -244,7 +251,7 @@ $(function () {
     // Detail panel rendering
     // -------------------------------------------------------------------------
 
-    function renderDetail($detail, item, invoices, cfDefs, contact, transactionsReq) {
+    function renderDetail($detail, item, invoices, cfDefs, contact, transactionsReq, customerContact) {
         const statusCls  = (item.status || '').toLowerCase() === 'active' ? 'badge-active' : 'badge-stopped';
         const statusText = capitalise(item.status || 'unknown');
 
@@ -253,9 +260,13 @@ $(function () {
             .split(/\s+/).slice(0, 2)
             .map(w => w[0].toUpperCase()).join('');
 
-        // ── Overview — family/missionary contact profile ─────────────────────
-        const cCfs    = (contact && contact.custom_fields)   || [];
-        const persons = (contact && contact.contact_persons) || [];
+        // ── Overview — customer contact profile ──────────────────────────────
+        // Sourced from the matching Zoho Books customer (via the item's
+        // "Customer Email" custom field, falling back to an exact item-name
+        // == contact-name match) — separate from the Project Manager contact
+        // (`contact`), which the Flow tab still uses for its upload target.
+        const cCfs    = (customerContact && customerContact.custom_fields)   || [];
+        const persons = (customerContact && customerContact.contact_persons) || [];
 
         // Get a custom field value by label (case-insensitive).
         function cfGet(label) {
@@ -311,15 +322,15 @@ $(function () {
             singleRow('Email', cfGet('Emergency Contact Email')),
         ].join('');
 
-        const hasContact  = contact && contact.contact_id;
+        const hasContact  = customerContact && customerContact.contact_id;
         const itemImageUrl = PROXY + '?endpoint=books_item_image&item_id=' + encodeURIComponent(item.item_id || '');
         const contactImageUrl = hasContact
-            ? PROXY + '?endpoint=books_contact_image&contact_id=' + encodeURIComponent(contact.contact_id)
+            ? PROXY + '?endpoint=books_contact_image&contact_id=' + encodeURIComponent(customerContact.contact_id)
             : '';
-        const contactName = (contact && contact.contact_name) || '';
+        const contactName = (customerContact && customerContact.contact_name) || '';
 
         const overviewRows = !hasContact
-            ? `<p class="detail-empty-msg">No Project Manager assigned to this item.</p>`
+            ? `<p class="detail-empty-msg">No matching Zoho Books customer found for this item.</p>`
             : `<div class="ov-card">
                 <div class="ov-layout">
                     <div class="ov-left">
@@ -327,7 +338,7 @@ $(function () {
                              onerror="this.style.display='none';this.nextElementSibling.style.display=''">
                         <div class="ov-photo-fallback" style="display:none">${escHtml((contactName || item.name || '?')[0].toUpperCase())}</div>
                         <div class="ov-profile-name">${escHtml(contactName)}</div>
-                        <span class="ov-profile-badge">Project Manager</span>
+                        <span class="ov-profile-badge">Customer</span>
                     </div>
                     <div class="ov-right">
                         <div class="ov-section">
